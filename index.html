@@ -242,7 +242,12 @@ async function syncQueue(){
       try {
         const res = await api('add', { rec: item });
         await Q.del(item.clientId);
-        if (res && res.reason && S.refs?.user?.role === 'Диспетчер') toast('Позначено для перевірки: ' + res.reason, 4000);
+        if (res && S.refs?.user?.role === 'Диспетчер') {
+          const c = res.cons, m = S.refs.machines.find(x=>x.id===item.machineId);
+          const cs = c && c.rate!=null ? `Розхід ${fmt1(c.rate)} ${m&&m.unit==='км'?'л/100км':'л/м/г'}${c.dev!=null?' ('+sgn(c.dev)+'% від норми)':''}` : (c && c.method ? c.method : '');
+          const msg = [cs, res.reason ? 'Перевірити: ' + res.reason : ''].filter(Boolean).join(' · ');
+          if (msg) toast(msg, 4500);
+        }
       } catch(e) {
         if (e.code === 'auth') { logout(); return; }
         if (/Failed to fetch|NetworkError|Load failed/i.test(e.message)) break;
@@ -558,6 +563,18 @@ function stOf(r){
 }
 const stLabel = { done:'Перевірено', warn:'Перевірити', ok:'Збігається', wait:'Очікує FreeTrack' };
 
+/* ---- розхід (рахує сервер, тут лише показ) ---- */
+const consUnit = id => (S.refs.machines.find(m=>m.id===id)||{}).unit==='км' ? 'л/100км' : 'л/м/г';
+const consTol = () => S.refs.settings?.consTolP || 15;
+const consBad = r => r.cons!=null && r.consDev!=null && Math.abs(r.consDev) > consTol();
+const consKind = r => /^Середній/.test(r.consMethod||'') ? '≈ середній' : 'точний';
+function consCell(r){
+  if (r.type !== 'out') return '—';
+  if (r.cons == null) return `<span class="hint">${esc(r.consMethod||'—')}</span>`;
+  const col = r.consDev==null ? 'var(--fg)' : consBad(r) ? 'var(--warn)' : 'var(--ok)';
+  return `<b class="num" style="color:${col}">${fmt1(r.cons)}</b> <span class="hint">${consUnit(r.machineId)}</span><div class="hint" style="margin:0">${consKind(r)}${r.consDev!=null?' · '+sgn(r.consDev)+'% від норми':''}</div>`;
+}
+
 function consumption(recs){
   const R = S.refs;
   return R.machines.map(m => {
@@ -607,6 +624,8 @@ function renderDisp(){
     const withFt = outs.filter(r=>r.ft!=null);
     const ftDiff = withFt.reduce((s,r)=>s+(r.diff||0),0);
     const flagged = recs.filter(r=>stOf(r)==='warn');
+    const attention = recs.filter(r=>stOf(r)==='warn' || (consBad(r) && stOf(r)!=='done'))
+      .map(r => ({ r, why: [stOf(r)==='warn' ? r.reason : '', consBad(r) ? `Розхід ${fmt1(r.cons)} ${consUnit(r.machineId)} (${sgn(r.consDev)}% від норми)` : ''].filter(Boolean).join('; ') }));
     const waiting = recs.filter(r=>stOf(r)==='wait').length;
     if (S.dtab === 'overview') {
       body = `<div class="kpis">
@@ -620,8 +639,8 @@ function renderDisp(){
       <div class="grid2">
         <div class="panel"><h3>Видано по днях</h3><p class="s">Внесено заправником проти FreeTrack</p>
           <div class="legend"><span><i style="background:var(--accent)"></i>Заправник</span><span><i style="background:var(--ft)"></i>FreeTrack</span></div>${chartSvg(recs, D.from, D.to)}</div>
-        <div class="panel"><h3>Потребують уваги</h3><p class="s">Розбіжності, мотогодини, GPS</p>
-          ${flagged.length ? flagged.sort((a,b)=>b.ts.localeCompare(a.ts)).slice(0,30).map(r=>`<div class="alert" data-id="${esc(r.id)}"><span class="pill warn">!</span><div style="min-width:0"><div class="t">${esc(r.type==='in'?'Отримання · '+r.place:r.machine)} · ${fmt1(r.liters)} л</div><p class="s">${dShort(r.ts)} ${tStr(r.ts)} · ${esc(r.reason||'')}</p></div></div>`).join('') : `<div class="empty">Все сходиться</div>`}
+        <div class="panel"><h3>Потребують уваги</h3><p class="s">Розбіжності, мотогодини, GPS, розхід понад норму</p>
+          ${attention.length ? attention.sort((a,b)=>b.r.ts.localeCompare(a.r.ts)).slice(0,30).map(({r,why})=>`<div class="alert" data-id="${esc(r.id)}"><span class="pill warn">!</span><div style="min-width:0"><div class="t">${esc(r.type==='in'?'Отримання · '+r.place:r.machine)} · ${fmt1(r.liters)} л</div><p class="s">${dShort(r.ts)} ${tStr(r.ts)} · ${esc(why)}</p></div></div>`).join('') : `<div class="empty">Все сходиться</div>`}
         </div>
       </div>`;
     }
@@ -632,7 +651,7 @@ function renderDisp(){
         .filter(r => !q || (r.machine+' '+r.receiver+' '+r.place+' '+r.fueler).toLowerCase().includes(q));
       body = `<div class="bar-row"><div class="chips">${[['all','Усі'],['warn','Перевірити'],['wait','Очікує'],['ok','Збігається'],['done','Перевірено']].map(([k,t])=>`<button class="chip" aria-pressed="${S.filter===k}" data-f="${k}">${t}</button>`).join('')}</div>
         <input class="search" id="sq" type="search" placeholder="Техніка, ПІБ, об'єкт" value="${esc(S.q)}"></div>
-      <div class="tablebox"><table><thead><tr><th>Дата</th><th>Техніка / АЗС</th><th>Отримувач</th><th class="n">Показник</th><th class="n">Приріст</th><th class="n">Літри</th><th class="n">FreeTrack</th><th class="n">Різниця</th><th>Max</th><th>Місце</th><th>Заправник</th><th>Статус</th></tr></thead><tbody>
+      <div class="tablebox"><table><thead><tr><th>Дата</th><th>Техніка / АЗС</th><th>Отримувач</th><th class="n">Показник</th><th class="n">Приріст</th><th class="n">Літри</th><th class="n">FreeTrack</th><th class="n">Різниця</th><th>Max</th><th>Розхід</th><th>Місце</th><th>Заправник</th><th>Статус</th></tr></thead><tbody>
       ${rows.map(r => { const st = stOf(r); return `<tr class="${st==='warn'?'flag':''}" data-id="${esc(r.id)}">
         <td class="num">${dShort(r.ts)} ${tStr(r.ts)}</td>
         <td>${r.type==='in'?'<b style="color:var(--ok)">Отримання</b> · '+esc(r.place):esc(r.machine)}</td>
@@ -643,21 +662,25 @@ function renderDisp(){
         <td class="n">${r.ft!=null?fmt1(r.ft):'…'}</td>
         <td class="n">${r.diff!=null?sgn(r.diff):'—'}</td>
         <td>${r.max?'✓':''}</td>
+        <td style="white-space:nowrap">${consCell(r)}</td>
         <td>${r.type==='in'?'':esc(r.place)}</td>
         <td>${esc(r.fueler)}</td>
-        <td><span class="pill ${st}">${stLabel[st]}</span>${r.reason&&st==='warn'?`<div class="why">${esc(r.reason)}</div>`:''}</td></tr>`; }).join('') || `<tr><td colspan="12" class="empty">Немає записів</td></tr>`}
+        <td><span class="pill ${st}">${stLabel[st]}</span>${r.reason&&st==='warn'?`<div class="why">${esc(r.reason)}</div>`:''}</td></tr>`; }).join('') || `<tr><td colspan="13" class="empty">Немає записів</td></tr>`}
       </tbody></table></div>`;
     }
     if (S.dtab === 'machines') {
       const cs = consumption(D.records);
-      const tol = S.refs.settings?.consTolP || 15;
-      body = `<div class="tablebox"><table style="min-width:720px"><thead><tr><th>Техніка</th><th class="n">Заправок</th><th class="n">Літрів</th><th class="n">Відпрацьовано</th><th class="n">Факт</th><th class="n">Норма</th><th style="width:170px">Відхилення</th></tr></thead><tbody>
+      const tol = consTol();
+      body = `<div class="tablebox"><table style="min-width:860px"><thead><tr><th>Техніка</th><th class="n">Заправок</th><th class="n">Літрів</th><th class="n">Відпрацьовано</th><th>Останній розхід</th><th class="n">За період</th><th class="n">Норма</th><th style="width:170px">Відхилення за період</th></tr></thead><tbody>
       ${cs.map(c => { const col = c.dev==null ? 'var(--ft)' : Math.abs(c.dev)<=tol ? 'var(--ok)' : 'var(--warn)'; const u = c.m.unit==='км';
+        const lastR = D.records.filter(r=>r.inPeriod && r.machineId===c.m.id && r.type==='out').sort((a,b)=>b.ts.localeCompare(a.ts))[0];
         return `<tr><td>${esc(c.m.name)}<div class="hint" style="margin:0">${esc(c.m.type)}</div></td><td class="n">${c.n}</td><td class="n">${fmt1(c.lit)}</td>
-          <td class="n">${c.units?fmt1(c.units)+(u?' км':' м/г'):'—'}</td><td class="n">${c.rate?fmt1(c.rate)+(u?' л/100км':' л/м/г'):'—'}</td><td class="n">${c.m.norm?fmt1(c.m.norm):'—'}</td>
-          <td>${c.dev==null?`<span class="hint">${c.m.norm?'потрібні 2 заправки «до повного»':'вкажіть норму'}</span>`:`<span class="num" style="color:${col};font-weight:650">${sgn(c.dev)}%</span><div class="mbar"><i style="width:${Math.min(100,Math.abs(c.dev)*2)}%;background:${col}"></i></div>`}</td></tr>`; }).join('') || `<tr><td colspan="7" class="empty">Немає заправок за період</td></tr>`}
+          <td class="n">${c.units?fmt1(c.units)+(u?' км':' м/г'):'—'}</td>
+          <td style="white-space:nowrap">${lastR?consCell(lastR):'—'}</td>
+          <td class="n">${c.rate?fmt1(c.rate)+(u?' л/100км':' л/м/г'):'—'}</td><td class="n">${c.m.norm?fmt1(c.m.norm):'—'}</td>
+          <td>${c.dev==null?`<span class="hint">${c.m.norm?'потрібні 2 заправки «до повного»':'вкажіть норму'}</span>`:`<span class="num" style="color:${col};font-weight:650">${sgn(c.dev)}%</span><div class="mbar"><i style="width:${Math.min(100,Math.abs(c.dev)*2)}%;background:${col}"></i></div>`}</td></tr>`; }).join('') || `<tr><td colspan="8" class="empty">Немає заправок за період</td></tr>`}
       </tbody></table></div>
-      <p class="note">Факт рахується між заправками «до повного»: літри, залиті після першої такої заправки, ділимо на приріст мотогодин (або км).</p>`;
+      <p class="note"><b>Останній розхід</b> — по останній заправці: точний між двома «до повного», або ≈ середній, якщо кілька заправок поспіль були не до повного. <b>За період</b> — тільки точні відрізки між повними заправками за обраний період.</p>`;
     }
   }
   $('#app').innerHTML = `<div class="wrap wide">
@@ -696,6 +719,7 @@ function openDetail(id){
         ${r.type==='out'?`<dt>Отримувач</dt><dd>${esc(r.receiver||'—')}</dd>
         <dt>Показник</dt><dd class="num">${fmt1(r.value)} ${r.prev!=null?`<span class="hint">(було ${fmt1(r.prev)}, ${sgn(r.delta)})</span>`:''}</dd>`:`<dt>АЗС</dt><dd>${esc(r.place)}</dd>`}
         <dt>Літри</dt><dd class="num">${fmt1(r.liters)}${r.max?' · до повного':''}</dd>
+        ${r.type==='out'?`<dt>Розхід</dt><dd>${consCell(r)}</dd>`:''}
         <dt>FreeTrack</dt><dd class="num">${r.ft!=null?fmt1(r.ft)+' л · різниця '+sgn(r.diff):'ще не звірено'}</dd>
         ${r.type==='out'?`<dt>Місце</dt><dd>${esc(r.place)}${map?` · <a class="link" href="${map}" target="_blank" rel="noopener">карта</a>`:''}${r.acc!=null?` <span class="hint">±${fmt(r.acc)} м</span>`:''}</dd>`:''}
         <dt>Заправник</dt><dd>${esc(r.fueler)}</dd>
