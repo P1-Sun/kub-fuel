@@ -103,6 +103,12 @@ h2{font-size:13px;font-weight:500;color:var(--muted);text-transform:uppercase;le
 .sel .link{font-weight:600;flex-shrink:0}
 .sheet .pick{max-height:calc(100vh - 330px);max-height:calc(100dvh - 330px - env(safe-area-inset-top,0px))}
 .btn.send{width:100%;margin-top:6px;padding:17px}
+.fsw{display:inline-flex;background:var(--bg);border-radius:8px;padding:2px;margin-top:6px}
+.fsw button{border:0;background:transparent;font-size:13px;font-weight:600;padding:4px 12px;border-radius:6px;color:var(--muted)}
+.fsw button[aria-pressed="true"]{background:var(--card);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.fsw button[data-fu="Бензин"][aria-pressed="true"]{background:var(--accent);color:#fff}
+.two.one{grid-template-columns:1fr}
+.ptag{display:inline-block;font-size:11px;font-weight:700;padding:1px 6px;border-radius:6px;background:var(--accent);color:#fff;vertical-align:1px}
 .field{background:var(--card);border-radius:12px;padding:10px 14px}
 .field label,.lbl{display:block;font-size:13px;color:var(--muted);margin-bottom:2px}
 .field input[type=text],.field input[type=number],.field input[type=search],.field textarea{width:100%;border:0;background:transparent;font-size:20px;font-weight:600;padding:2px 0;outline:none}
@@ -156,6 +162,7 @@ h2{font-size:13px;font-weight:500;color:var(--muted);text-transform:uppercase;le
 .pill.ok{background:var(--ok-soft);color:var(--ok)}
 .pill.warn{background:var(--warn-soft);color:var(--warn)}
 .pill.wait{background:var(--wait-soft);color:var(--wait)}
+.pill.nf{background:var(--wait-soft);color:var(--wait)}
 .pill.done{background:var(--info-soft);color:var(--info)}
 .tablebox{overflow-x:auto;background:var(--card);border-radius:14px}
 table{border-collapse:collapse;width:100%;font-size:14px;min-width:960px}
@@ -209,6 +216,12 @@ function toast(t, ms=2400){ const el=document.createElement('div'); el.className
 function driveId(url){ const m = String(url||'').match(/\/d\/([\w-]+)/); return m ? m[1] : null; }
 function thumb(url, w=400){ const id = driveId(url); return id ? `https://drive.google.com/thumbnail?id=${id}&sz=w${w}` : ''; }
 function distM(a1,o1,a2,o2){ const r=x=>x*Math.PI/180; const da=r(a2-a1), dn=r(o2-o1); const h=Math.sin(da/2)**2+Math.cos(r(a1))*Math.cos(r(a2))*Math.sin(dn/2)**2; return 2*6371000*Math.asin(Math.sqrt(h)); }
+
+const FUELS = ['ДП','Бензин'];
+const isPet = r => r.fuel === 'Бензин';
+const fuelSw = (id) => `<div class="fsw" role="group" aria-label="Тип пального" id="${id}">${FUELS.map((x,i)=>`<button type="button" data-fu="${x}" aria-pressed="${i===0}">${x}</button>`).join('')}</div>`;
+function bindFuelSw(id, onChange){ $$('#'+id+' [data-fu]').forEach(b => b.onclick = () => { $$('#'+id+' [data-fu]').forEach(x=>x.setAttribute('aria-pressed', x===b)); onChange(b.dataset.fu); }); }
+const ptag = r => isPet(r) ? ' <span class="ptag">бензин</span>' : '';
 
 /* ===================== API ===================== */
 const S = { pin: ls.get('pin', null), refs: ls.get('refs', null), view: null, day: ls.get('day', null), dash: null, period: 7, dtab: 'overview', filter: 'all', q: '' };
@@ -316,9 +329,11 @@ function renderFuel(){
   const day = S.day && S.day.date === todayK ? S.day : { records: [], balance: S.day?.balance ?? null, dayStart: S.day?.balance ?? null };
   const pend = pending.map(p => ({ ...p, machine: (S.refs.machines.find(m=>m.id===p.machineId)||{}).name || '', pendingLocal: true }));
   const recs = [...day.records, ...pend].sort((a,b)=> (b.ts||'').localeCompare(a.ts||''));
-  const inL = recs.filter(r=>r.type==='in').reduce((s,r)=>s+(+r.liters||0),0);
-  const outL = recs.filter(r=>r.type==='out').reduce((s,r)=>s+(+r.liters||0),0);
-  const pendDelta = pend.reduce((s,r)=>s+(r.type==='in'?1:-1)*(+r.liters||0),0);
+  const dp = recs.filter(r=>!isPet(r));
+  const inL = dp.filter(r=>r.type==='in').reduce((s,r)=>s+(+r.liters||0),0);
+  const outL = dp.filter(r=>r.type==='out').reduce((s,r)=>s+(+r.liters||0),0);
+  const petOut = recs.filter(r=>isPet(r)&&r.type==='out').reduce((s,r)=>s+(+r.liters||0),0);
+  const pendDelta = pend.filter(r=>!isPet(r)).reduce((s,r)=>s+(r.type==='in'?1:-1)*(+r.liters||0),0);
   const left = day.balance == null ? null : day.balance + pendDelta;
   const dateStr = new Date().toLocaleDateString('uk-UA',{weekday:'long',day:'numeric',month:'long'});
   $('#app').innerHTML = `<div class="wrap">
@@ -330,15 +345,16 @@ function renderFuel(){
       <div class="tile"><div class="k">Видано</div><div class="v num">${fmt(outL)} <small>л</small></div></div>
       <div class="tile"><div class="k">У бочці</div><div class="v num">${fmt(left)} <small>л</small></div></div>
     </div>
+    ${petOut ? `<p class="note" style="margin-top:8px">Цифри вище — дизель. Бензину видано сьогодні: ${fmt1(petOut)} л</p>` : ''}
     <div class="actions">
       <button class="btn" id="bOut">Заправити техніку</button>
       <button class="btn sec" id="bIn">Отримати пальне в КУБ</button>
     </div>
     <h2>Відомість за день</h2>
     <div class="list">${recs.length ? recs.map(r => r.type==='in' ? `
-      <div class="row"><div class="ico in">+</div><div class="main"><div class="t">Отримано в КУБ</div><div class="s">${tStr(r.ts)} · ${esc(r.place)}${r.pendingLocal?` · <span class="tag">${r.error?esc(r.error):'очікує мережі'}</span>`:''}</div></div><div class="r"><div class="l num">+${fmt1(r.liters)} л</div></div></div>` : `
+      <div class="row"><div class="ico in">+</div><div class="main"><div class="t">Отримано${isPet(r)?'':' в КУБ'}${ptag(r)}</div><div class="s">${tStr(r.ts)} · ${esc(r.place)}${r.pendingLocal?` · <span class="tag">${r.error?esc(r.error):'очікує мережі'}</span>`:''}</div></div><div class="r"><div class="l num">+${fmt1(r.liters)} л</div></div></div>` : `
       <div class="row"><div class="ico out">−</div>
-        <div class="main"><div class="t">${esc(r.machine)}</div><div class="s num">${tStr(r.ts)} · ${r.value!=null&&r.value!==''?fmt1(+r.value):'—'} · ${esc(r.receiver||'')}${r.max?' · до повного':''}${r.pendingLocal?` · <span class="tag">${r.error?esc(r.error):'очікує мережі'}</span>`:''}</div></div>
+        <div class="main"><div class="t">${esc(r.machine)}${ptag(r)}</div><div class="s num">${tStr(r.ts)}${r.value!=null&&r.value!==''?' · '+fmt1(+r.value):''} · ${esc(r.receiver||'')}${r.max?' · до повного':''}${r.pendingLocal?` · <span class="tag">${r.error?esc(r.error):'очікує мережі'}</span>`:''}</div></div>
         <div class="r"><div class="l num">−${fmt1(r.liters)} л</div></div></div>`).join('') : `<div class="empty">Ще немає записів за сьогодні</div>`}
     </div>
     <p class="note">Збережені записи змінює тільки диспетчер. Якщо зв'язку немає, записи чекають у телефоні й надсилаються самі.</p>
@@ -402,18 +418,18 @@ function photoInput(id, boxId, hintId, onPick){
 function openOut(){
   const R = S.refs;
   const cats = [...R.categories.filter(c => R.machines.some(m=>m.cat===c)), 'Усі'];
-  const f = { cat: cats[0] || 'Спецтехніка', q:'', machine:null, receiver:'', value:'', liters:'', max:true, file:null, geo:null, ts: null };
+  const f = { cat: cats[0] || 'Спецтехніка', q:'', machine:null, receiver:'', value:'', liters:'', max:true, file:null, geo:null, ts: null, fuel:'ДП' };
   $('#layer').innerHTML = `<div class="scrim"><div class="sheet" role="dialog" aria-label="Заправка техніки">
     <div class="sheet-head c3"><button class="link" id="x">Скасувати</button><b>Заправка</b><span></span></div>
     <div class="stack">
       <div id="mBox"></div>
       <div class="field"><label for="rc">Отримувач (ПІБ)</label><input type="text" id="rc" placeholder="Хто отримує пальне" autocomplete="off"></div>
-      <div class="two">
-        <div class="field"><label for="val" id="valL">Мотогодини</label><input type="number" inputmode="decimal" step="0.1" id="val" placeholder="0"><div class="hint" id="valH"></div></div>
-        <div class="field"><label for="lt">Літри</label><input type="number" inputmode="decimal" step="0.1" id="lt" placeholder="0"><div class="hint">Звіриться з FreeTrack</div></div>
+      <div class="two" id="twoBox">
+        <div class="field" id="valBox"><label for="val" id="valL">Мотогодини</label><input type="number" inputmode="decimal" step="0.1" id="val" placeholder="0"><div class="hint" id="valH"></div></div>
+        <div class="field"><label for="lt">Літри</label><input type="number" inputmode="decimal" step="0.1" id="lt" placeholder="0">${fuelSw('fuO')}</div>
       </div>
-      <div class="field toggle"><div><div style="font-weight:550">Заправлено до повного</div><div class="hint" style="margin:0">Для розрахунку розходу</div></div><label class="sw"><input type="checkbox" id="max" checked><span></span></label></div>
-      <label class="field photo" for="ph"><div class="ph" id="phB">+</div><div><div style="font-weight:550">Фото лічильника</div><div class="hint" style="margin:0" id="phH">Обов'язково, з камери</div></div>
+      <div class="field toggle" id="maxBox"><div><div style="font-weight:550">Заправлено до повного</div><div class="hint" style="margin:0">Для розрахунку розходу</div></div><label class="sw"><input type="checkbox" id="max" checked><span></span></label></div>
+      <label class="field photo" for="ph"><div class="ph" id="phB">+</div><div><div style="font-weight:550" id="phT">Фото лічильника</div><div class="hint" style="margin:0" id="phH">Обов'язково, з камери</div></div>
         <input type="file" id="ph" accept="image/*" capture="environment" hidden></label>
       <div class="field geo"><span class="dot" id="gD"></span><div style="min-width:0"><div style="font-weight:550" id="gT">Визначаю місце…</div><div class="hint" style="margin:0" id="gS">GPS телефона</div></div></div>
       <div class="hint bad" id="err" hidden></div>
@@ -427,7 +443,7 @@ function openOut(){
       box.innerHTML = `<div class="sel"><span class="check" aria-hidden="true">✓</span>
         <div class="main"><div class="t">${esc(m.name)}</div><div class="s">${esc(m.type)} · ${esc(m.cat)}</div></div>
         <button class="link" id="chg">Змінити</button></div>`;
-      $('#chg').onclick = () => { f.machine = null; f.q = ''; drawMachine(); valHint(); };
+      $('#chg').onclick = () => { f.machine = null; f.q = ''; drawMachine(); applyUnit(); valHint(); };
       return;
     }
     box.innerHTML = `<div class="chips" id="cats"></div>
@@ -449,9 +465,17 @@ function openOut(){
       f.machine = b.dataset.m; const m = R.machines.find(x=>x.id===f.machine);
       if (!f.receiver || f.receiverAuto) { f.receiver = m.receiver; f.receiverAuto = true; $('#rc').value = m.receiver; }
       $('#valL').textContent = m.unit === 'км' ? 'Пробіг, км' : 'Мотогодини';
-      drawMachine(); valHint();
-      $('#val').focus();
+      drawMachine(); applyUnit(); valHint();
+      $(m.unit === 'none' ? '#lt' : '#val').focus();
     });
+  };
+  // Техніка «без показника» (лопати, промивка, легкові): без мотогодин, без «до повного», фото за бажанням
+  const noMeter = () => { const m = f.machine && R.machines.find(x=>x.id===f.machine); return !!m && m.unit === 'none'; };
+  const applyUnit = () => {
+    const nm = noMeter();
+    $('#valBox').hidden = nm; $('#maxBox').hidden = nm; $('#twoBox').classList.toggle('one', nm);
+    $('#phT').textContent = nm ? 'Фото (за бажанням)' : 'Фото лічильника';
+    if (!f.file) $('#phH').textContent = nm ? 'Можна без фото' : "Обов'язково, з камери";
   };
   const valHint = () => {
     const h = $('#valH'); h.className = 'hint';
@@ -473,6 +497,7 @@ function openOut(){
   $('#val').oninput = e => { f.value = e.target.value; valHint(); };
   $('#lt').oninput = e => f.liters = e.target.value;
   $('#max').onchange = e => f.max = e.target.checked;
+  bindFuelSw('fuO', v => f.fuel = v);
   photoInput('ph','phB','phH', file => { f.file = file; f.ts = new Date().toISOString(); });
   getGeo().then(g => {
     if (!$('#gT')) return;
@@ -486,7 +511,8 @@ function openOut(){
   $('#x').onclick = () => $('#layer').innerHTML = '';
   $('#save').onclick = async () => {
     const miss = [];
-    if (!f.machine) miss.push('техніку'); if (f.value==='') miss.push('показник'); if (!(+f.liters>0)) miss.push('літри'); if (!f.file) miss.push('фото');
+    const nm = noMeter();
+    if (!f.machine) miss.push('техніку'); if (!nm && f.value==='') miss.push('показник'); if (!(+f.liters>0)) miss.push('літри'); if (!nm && !f.file) miss.push('фото');
     const err = $('#err');
     if (miss.length) { err.hidden=false; err.textContent = 'Додайте: ' + miss.join(', '); return; }
     const m = R.machines.find(x=>x.id===f.machine);
@@ -494,16 +520,16 @@ function openOut(){
     try {
       const ts = f.ts || new Date().toISOString();
       const g = f.geo && !f.geo.err ? f.geo : null;
-      const photo = await makePhoto(f.file, [
+      const photo = !f.file ? null : await makePhoto(f.file, [
         new Date(ts).toLocaleString('uk-UA'),
-        `${m.name} · ${f.value} ${m.unit==='км'?'км':'м/г'} · ${f.liters} л`,
+        nm ? `${m.name} · ${f.liters} л ${f.fuel}` : `${m.name} · ${f.value} ${m.unit==='км'?'км':'м/г'} · ${f.liters} л ${f.fuel}`,
         g ? `${g.lat.toFixed(5)}, ${g.lon.toFixed(5)} ±${Math.round(g.acc)}м` : 'GPS не визначено',
         S.refs.user.name
       ]);
-      const rec = { clientId: uid(), type:'out', ts, machineId: m.id, receiver: f.receiver.trim(), value: +f.value, liters: +f.liters, max: f.max,
+      const rec = { clientId: uid(), type:'out', ts, machineId: m.id, receiver: f.receiver.trim(), value: nm ? null : +f.value, liters: +f.liters, max: nm ? false : f.max, fuel: f.fuel,
         lat: g?.lat ?? null, lon: g?.lon ?? null, acc: g?.acc ?? null, photo };
       await saveRec(rec);
-      R.last = R.last || {}; R.last[m.id] = { val: +f.value, ts }; ls.set('refs', R);
+      if (!nm) { R.last = R.last || {}; R.last[m.id] = { val: +f.value, ts }; ls.set('refs', R); }
     } catch(e) { err.hidden=false; err.textContent = e.message; $('#save').disabled=false; $('#save').textContent='Відправити'; }
   };
 }
@@ -511,12 +537,12 @@ function openOut(){
 /* ---- отримання в КУБ ---- */
 function openIn(){
   const R = S.refs;
-  const f = { azs: R.azs[0] || '', liters:'', file:null, ts:null };
+  const f = { azs: R.azs[0] || '', liters:'', file:null, ts:null, fuel:'ДП' };
   $('#layer').innerHTML = `<div class="scrim"><div class="sheet" role="dialog" aria-label="Отримання пального">
     <div class="sheet-head c3"><button class="link" id="x">Скасувати</button><b>Отримання в КУБ</b><span></span></div>
     <div class="stack">
       <div><span class="lbl" style="margin-left:4px">АЗС</span><div class="chips" id="az"></div></div>
-      <div class="field"><label for="lt2">Літри за чеком</label><input type="number" inputmode="decimal" step="0.1" id="lt2" placeholder="0"></div>
+      <div class="field"><label for="lt2">Літри за чеком</label><input type="number" inputmode="decimal" step="0.1" id="lt2" placeholder="0">${fuelSw('fuI')}</div>
       <label class="field photo" for="ph2"><div class="ph" id="phB2">+</div><div><div style="font-weight:550">Фото чека</div><div class="hint" style="margin:0" id="phH2">Обов'язково</div></div><input type="file" id="ph2" accept="image/*" capture="environment" hidden></label>
       <div class="hint bad" id="err" hidden></div>
       <button class="btn send" id="save">Відправити</button>
@@ -524,6 +550,7 @@ function openIn(){
   const draw = () => { $('#az').innerHTML = R.azs.map(a=>`<button class="chip" aria-pressed="${a===f.azs}" data-a="${esc(a)}">${esc(a)}</button>`).join('') || '<span class="hint">Додайте АЗС у таблицю</span>'; $$('[data-a]').forEach(b=>b.onclick=()=>{ f.azs=b.dataset.a; draw(); }); };
   draw();
   $('#lt2').oninput = e => f.liters = e.target.value;
+  bindFuelSw('fuI', v => f.fuel = v);
   photoInput('ph2','phB2','phH2', file => { f.file = file; f.ts = new Date().toISOString(); });
   $('#x').onclick = () => $('#layer').innerHTML = '';
   $('#save').onclick = async () => {
@@ -532,8 +559,8 @@ function openIn(){
     $('#save').disabled = true; $('#save').innerHTML = '<span class="spin"></span> Відправляю…';
     try {
       const ts = f.ts || new Date().toISOString();
-      const photo = await makePhoto(f.file, [new Date(ts).toLocaleString('uk-UA'), `КУБ · ${f.azs} · ${f.liters} л`, S.refs.user.name]);
-      await saveRec({ clientId: uid(), type:'in', ts, place: f.azs, liters: +f.liters, photo });
+      const photo = await makePhoto(f.file, [new Date(ts).toLocaleString('uk-UA'), `${f.fuel==='Бензин'?'Бензин (каністра)':'КУБ'} · ${f.azs} · ${f.liters} л`, S.refs.user.name]);
+      await saveRec({ clientId: uid(), type:'in', ts, place: f.azs, liters: +f.liters, photo, fuel: f.fuel });
     } catch(e) { $('#err').hidden=false; $('#err').textContent=e.message; $('#save').disabled=false; $('#save').textContent='Відправити'; }
   };
 }
@@ -559,9 +586,10 @@ function stOf(r){
   if (r.status === 'Перевірено') return 'done';
   if (r.status === 'Перевірити') return 'warn';
   if (r.status === 'Збігається') return 'ok';
+  if (r.status === 'Без FreeTrack') return 'nf';
   return 'wait';
 }
-const stLabel = { done:'Перевірено', warn:'Перевірити', ok:'Збігається', wait:'Очікує FreeTrack' };
+const stLabel = { done:'Перевірено', warn:'Перевірити', ok:'Збігається', wait:'Очікує FreeTrack', nf:'Без FreeTrack' };
 
 /* ---- розхід (рахує сервер, тут лише показ) ---- */
 const consUnit = id => (S.refs.machines.find(m=>m.id===id)||{}).unit==='км' ? 'л/100км' : 'л/м/г';
@@ -619,7 +647,8 @@ function renderDisp(){
   let body = '<div class="empty"><span class="spin"></span></div>';
   if (D) {
     const recs = D.records.filter(r=>r.inPeriod);
-    const outs = recs.filter(r=>r.type==='out'), ins = recs.filter(r=>r.type==='in');
+    const outs = recs.filter(r=>r.type==='out' && !isPet(r)), ins = recs.filter(r=>r.type==='in' && !isPet(r));
+    const petL = recs.filter(r=>r.type==='out' && isPet(r)).reduce((s,r)=>s+r.liters,0);
     const outL = outs.reduce((s,r)=>s+r.liters,0), inL = ins.reduce((s,r)=>s+r.liters,0);
     const withFt = outs.filter(r=>r.ft!=null);
     const ftDiff = withFt.reduce((s,r)=>s+(r.diff||0),0);
@@ -629,7 +658,7 @@ function renderDisp(){
     const waiting = recs.filter(r=>stOf(r)==='wait').length;
     if (S.dtab === 'overview') {
       body = `<div class="kpis">
-        <div class="tile"><div class="k">Видано</div><div class="v num">${fmt(outL)} <small>л</small></div></div>
+        <div class="tile"><div class="k">Видано ДП</div><div class="v num">${fmt(outL)} <small>л</small></div>${petL?`<div class="hint" style="margin:0">+ бензин ${fmt1(petL)} л</div>`:''}</div>
         <div class="tile"><div class="k">Отримано в КУБ</div><div class="v num">${fmt(inL)} <small>л</small></div></div>
         <div class="tile"><div class="k">У бочці зараз</div><div class="v num">${fmt(D.balance)} <small>л</small></div></div>
         <div class="tile"><div class="k">Різниця з FreeTrack</div><div class="v num" style="color:${Math.abs(ftDiff)>50?'var(--warn)':'var(--fg)'}">${sgn(ftDiff)} <small>л</small></div></div>
@@ -638,7 +667,7 @@ function renderDisp(){
       ${D.ftConfigured ? '' : `<p class="note" style="color:var(--warn)">FreeTrack ID КУБа не вказано у вкладці «Налаштування» — звірка не працює.</p>`}
       <div class="grid2">
         <div class="panel"><h3>Видано по днях</h3><p class="s">Внесено заправником проти FreeTrack</p>
-          <div class="legend"><span><i style="background:var(--accent)"></i>Заправник</span><span><i style="background:var(--ft)"></i>FreeTrack</span></div>${chartSvg(recs, D.from, D.to)}</div>
+          <div class="legend"><span><i style="background:var(--accent)"></i>Заправник</span><span><i style="background:var(--ft)"></i>FreeTrack</span></div>${chartSvg(recs.filter(r=>!isPet(r)), D.from, D.to)}</div>
         <div class="panel"><h3>Потребують уваги</h3><p class="s">Розбіжності, мотогодини, GPS, розхід понад норму</p>
           ${attention.length ? attention.sort((a,b)=>b.r.ts.localeCompare(a.r.ts)).slice(0,30).map(({r,why})=>`<div class="alert" data-id="${esc(r.id)}"><span class="pill warn">!</span><div style="min-width:0"><div class="t">${esc(r.type==='in'?'Отримання · '+r.place:r.machine)} · ${fmt1(r.liters)} л</div><p class="s">${dShort(r.ts)} ${tStr(r.ts)} · ${esc(why)}</p></div></div>`).join('') : `<div class="empty">Все сходиться</div>`}
         </div>
@@ -649,7 +678,7 @@ function renderDisp(){
       const rows = recs.slice().sort((a,b)=>b.ts.localeCompare(a.ts))
         .filter(r => S.filter==='all' || stOf(r)===S.filter)
         .filter(r => !q || (r.machine+' '+r.receiver+' '+r.place+' '+r.fueler).toLowerCase().includes(q));
-      body = `<div class="bar-row"><div class="chips">${[['all','Усі'],['warn','Перевірити'],['wait','Очікує'],['ok','Збігається'],['done','Перевірено']].map(([k,t])=>`<button class="chip" aria-pressed="${S.filter===k}" data-f="${k}">${t}</button>`).join('')}</div>
+      body = `<div class="bar-row"><div class="chips">${[['all','Усі'],['warn','Перевірити'],['wait','Очікує'],['ok','Збігається'],['done','Перевірено'],['nf','Без FreeTrack']].map(([k,t])=>`<button class="chip" aria-pressed="${S.filter===k}" data-f="${k}">${t}</button>`).join('')}</div>
         <input class="search" id="sq" type="search" placeholder="Техніка, ПІБ, об'єкт" value="${esc(S.q)}"></div>
       <div class="tablebox"><table><thead><tr><th>Дата</th><th>Техніка / АЗС</th><th>Отримувач</th><th class="n">Показник</th><th class="n">Приріст</th><th class="n">Літри</th><th class="n">FreeTrack</th><th class="n">Різниця</th><th>Max</th><th>Розхід</th><th>Місце</th><th>Заправник</th><th>Статус</th></tr></thead><tbody>
       ${rows.map(r => { const st = stOf(r); return `<tr class="${st==='warn'?'flag':''}" data-id="${esc(r.id)}">
@@ -658,7 +687,7 @@ function renderDisp(){
         <td>${esc(r.receiver||'—')}</td>
         <td class="n">${r.value!=null?fmt1(r.value):'—'}</td>
         <td class="n">${r.delta!=null?sgn(r.delta):'—'}</td>
-        <td class="n">${r.type==='in'?'+':''}${fmt1(r.liters)}</td>
+        <td class="n">${r.type==='in'?'+':''}${fmt1(r.liters)}${isPet(r)?'<div><span class="ptag">бензин</span></div>':''}</td>
         <td class="n">${r.ft!=null?fmt1(r.ft):'…'}</td>
         <td class="n">${r.diff!=null?sgn(r.diff):'—'}</td>
         <td>${r.max?'✓':''}</td>
@@ -718,7 +747,7 @@ function openDetail(id){
         <dt>Дата</dt><dd class="num">${new Date(r.ts).toLocaleString('uk-UA')}</dd>
         ${r.type==='out'?`<dt>Отримувач</dt><dd>${esc(r.receiver||'—')}</dd>
         <dt>Показник</dt><dd class="num">${fmt1(r.value)} ${r.prev!=null?`<span class="hint">(було ${fmt1(r.prev)}, ${sgn(r.delta)})</span>`:''}</dd>`:`<dt>АЗС</dt><dd>${esc(r.place)}</dd>`}
-        <dt>Літри</dt><dd class="num">${fmt1(r.liters)}${r.max?' · до повного':''}</dd>
+        <dt>Літри</dt><dd class="num">${fmt1(r.liters)} · ${esc(r.fuel||'ДП')}${r.max?' · до повного':''}</dd>
         ${r.type==='out'?`<dt>Розхід</dt><dd>${consCell(r)}</dd>`:''}
         <dt>FreeTrack</dt><dd class="num">${r.ft!=null?fmt1(r.ft)+' л · різниця '+sgn(r.diff):'ще не звірено'}</dd>
         ${r.type==='out'?`<dt>Місце</dt><dd>${esc(r.place)}${map?` · <a class="link" href="${map}" target="_blank" rel="noopener">карта</a>`:''}${r.acc!=null?` <span class="hint">±${fmt(r.acc)} м</span>`:''}</dd>`:''}
