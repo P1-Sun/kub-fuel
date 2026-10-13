@@ -591,6 +591,9 @@ function stOf(r){
 }
 const stLabel = { done:'Перевірено', warn:'Перевірити', ok:'Збігається', wait:'Очікує FreeTrack', nf:'Без FreeTrack' };
 
+/* Місце: геозона FreeTrack (де стояв КУБ) має перевагу над GPS телефона */
+const placeTxt = r => r.zone && r.zone !== 'поза геозонами' ? `${esc(r.zone)} <span class="hint">FT</span>` : esc(r.place);
+
 /* ---- розхід (рахує сервер, тут лише показ) ---- */
 const consUnit = id => (S.refs.machines.find(m=>m.id===id)||{}).unit==='км' ? 'л/100км' : 'л/м/г';
 const consTol = () => S.refs.settings?.consTolP || 15;
@@ -660,7 +663,7 @@ function renderDisp(){
       body = `<div class="kpis">
         <div class="tile"><div class="k">Видано ДП</div><div class="v num">${fmt(outL)} <small>л</small></div>${petL?`<div class="hint" style="margin:0">+ бензин ${fmt1(petL)} л</div>`:''}</div>
         <div class="tile"><div class="k">Отримано в КУБ</div><div class="v num">${fmt(inL)} <small>л</small></div></div>
-        <div class="tile"><div class="k">У бочці зараз</div><div class="v num">${fmt(D.balance)} <small>л</small></div></div>
+        <div class="tile"><div class="k">У бочці зараз</div><div class="v num">${fmt(D.balance)} <small>л</small></div>${D.level?`<div class="hint" style="margin:0;${Math.abs(D.level.v-D.balance)>50?'color:var(--warn)':''}">лінійка: ${fmt(D.level.v)} л · ${tStr(D.level.t)}</div>`:''}</div>
         <div class="tile"><div class="k">Різниця з FreeTrack</div><div class="v num" style="color:${Math.abs(ftDiff)>50?'var(--warn)':'var(--fg)'}">${sgn(ftDiff)} <small>л</small></div></div>
         <div class="tile"><div class="k">Перевірити</div><div class="v num" style="color:${flagged.length?'var(--warn)':'var(--ok)'}">${flagged.length}<small> · ${waiting} очікує</small></div></div>
       </div>
@@ -677,7 +680,7 @@ function renderDisp(){
       const q = S.q.toLowerCase();
       const rows = recs.slice().sort((a,b)=>b.ts.localeCompare(a.ts))
         .filter(r => S.filter==='all' || stOf(r)===S.filter)
-        .filter(r => !q || (r.machine+' '+r.receiver+' '+r.place+' '+r.fueler).toLowerCase().includes(q));
+        .filter(r => !q || (r.machine+' '+r.receiver+' '+r.place+' '+(r.zone||'')+' '+r.fueler).toLowerCase().includes(q));
       body = `<div class="bar-row"><div class="chips">${[['all','Усі'],['warn','Перевірити'],['wait','Очікує'],['ok','Збігається'],['done','Перевірено'],['nf','Без FreeTrack']].map(([k,t])=>`<button class="chip" aria-pressed="${S.filter===k}" data-f="${k}">${t}</button>`).join('')}</div>
         <input class="search" id="sq" type="search" placeholder="Техніка, ПІБ, об'єкт" value="${esc(S.q)}"></div>
       <div class="tablebox"><table><thead><tr><th>Дата</th><th>Техніка / АЗС</th><th>Отримувач</th><th class="n">Показник</th><th class="n">Приріст</th><th class="n">Літри</th><th class="n">FreeTrack</th><th class="n">Різниця</th><th>Max</th><th>Розхід</th><th>Місце</th><th>Заправник</th><th>Статус</th></tr></thead><tbody>
@@ -692,7 +695,7 @@ function renderDisp(){
         <td class="n">${r.diff!=null?sgn(r.diff):'—'}</td>
         <td>${r.max?'✓':''}</td>
         <td style="white-space:nowrap">${consCell(r)}</td>
-        <td>${r.type==='in'?'':esc(r.place)}</td>
+        <td>${r.type==='in'?'':placeTxt(r)}</td>
         <td>${esc(r.fueler)}</td>
         <td><span class="pill ${st}">${stLabel[st]}</span>${r.reason&&st==='warn'?`<div class="why">${esc(r.reason)}</div>`:''}</td></tr>`; }).join('') || `<tr><td colspan="13" class="empty">Немає записів</td></tr>`}
       </tbody></table></div>`;
@@ -750,7 +753,7 @@ function openDetail(id){
         <dt>Літри</dt><dd class="num">${fmt1(r.liters)} · ${esc(r.fuel||'ДП')}${r.max?' · до повного':''}</dd>
         ${r.type==='out'?`<dt>Розхід</dt><dd>${consCell(r)}</dd>`:''}
         <dt>FreeTrack</dt><dd class="num">${r.ft!=null?fmt1(r.ft)+' л · різниця '+sgn(r.diff):'ще не звірено'}</dd>
-        ${r.type==='out'?`<dt>Місце</dt><dd>${esc(r.place)}${map?` · <a class="link" href="${map}" target="_blank" rel="noopener">карта</a>`:''}${r.acc!=null?` <span class="hint">±${fmt(r.acc)} м</span>`:''}</dd>`:''}
+        ${r.type==='out'?`<dt>Місце</dt><dd>${placeTxt(r)}${map?` · <a class="link" href="${map}" target="_blank" rel="noopener">карта</a>`:''}${r.acc!=null?` <span class="hint">±${fmt(r.acc)} м</span>`:''}</dd>`:''}
         <dt>Заправник</dt><dd>${esc(r.fueler)}</dd>
         <dt>Статус</dt><dd><span class="pill ${st}">${stLabel[st]}</span>${r.reason?`<div class="why">${esc(r.reason)}</div>`:''}</dd>
       </dl></div>
