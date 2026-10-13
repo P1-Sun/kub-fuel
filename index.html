@@ -590,6 +590,7 @@ function stOf(r){
   return 'wait';
 }
 const stLabel = { done:'Перевірено', warn:'Перевірити', ok:'Збігається', wait:'Очікує FreeTrack', nf:'Без FreeTrack' };
+const stText = (r, st) => st==='wait' && r.type==='out' ? 'Звірка за день' : stLabel[st];
 
 /* Місце: геозона FreeTrack (де стояв КУБ) має перевагу над GPS телефона */
 const placeTxt = r => r.zone && r.zone !== 'поза геозонами' ? `${esc(r.zone)} <span class="hint">FT</span>` : esc(r.place);
@@ -622,16 +623,18 @@ function consumption(recs){
   }).filter(c => c.n > 0).sort((a,b)=>b.lit-a.lit);
 }
 
-function chartSvg(recs, from, to){
+function chartSvg(recs, from, to, fdays, pist){
+  const fdm = {}; (fdays||[]).forEach(x => fdm[x.day] = x.used);
+  (pist||[]).forEach(x => { const k = dKey(new Date(x.start)); fdm[k] = (fdm['p'+k] ? fdm[k] : 0) + x.liters; fdm['p'+k] = 1; }); // пістолет має перевагу над лінійкою
   const days = []; const d0 = new Date(from+'T00:00:00'), d1 = new Date(to+'T00:00:00');
   for (let d = new Date(d0); d <= d1; d.setDate(d.getDate()+1)) days.push(dKey(d));
-  const per = days.map(k => { const rs = recs.filter(r=>r.day===k && r.type==='out'); return { k, out: rs.reduce((s,r)=>s+r.liters,0), ft: rs.filter(r=>r.ft!=null).reduce((s,r)=>s+r.ft,0) }; });
+  const per = days.map(k => { const rs = recs.filter(r=>r.day===k && r.type==='out'); return { k, out: rs.reduce((s,r)=>s+r.liters,0), ft: Math.max(0, fdm[k] || 0) }; });
   const mx = Math.max(100, ...per.map(p=>Math.max(p.out,p.ft)));
   const step = mx > 2000 ? 500 : mx > 800 ? 200 : 100;
   const top = Math.ceil(mx/step)*step;
   const W=640, H=240, L=46, B=26, T=10, cw=(W-L-8)/per.length, y=v=>T+(H-T-B)*(1-v/top);
   const every = Math.ceil(per.length/10);
-  let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Видано по днях: заправник і FreeTrack">`;
+  let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Видано по днях: внесено в додатку і за лінійкою">`;
   for (let g=0; g<=top; g+=step) s += `<line x1="${L}" x2="${W-8}" y1="${y(g)}" y2="${y(g)}" stroke="var(--line)"/><text x="${L-6}" y="${y(g)+4}" text-anchor="end" font-size="11" fill="var(--muted)">${g}</text>`;
   per.forEach((p,i) => {
     const bw = Math.min(26, Math.max(2, cw*.32)), x = L + i*cw + (cw - bw*2 - 2)/2;
@@ -653,51 +656,62 @@ function renderDisp(){
     const outs = recs.filter(r=>r.type==='out' && !isPet(r)), ins = recs.filter(r=>r.type==='in' && !isPet(r));
     const petL = recs.filter(r=>r.type==='out' && isPet(r)).reduce((s,r)=>s+r.liters,0);
     const outL = outs.reduce((s,r)=>s+r.liters,0), inL = ins.reduce((s,r)=>s+r.liters,0);
-    const withFt = outs.filter(r=>r.ft!=null);
-    const ftDiff = withFt.reduce((s,r)=>s+(r.diff||0),0);
+    const fdays = (D.ftDays||[]).filter(x => x.day >= D.from);
+    const lnUsed = fdays.reduce((s,x)=>s+(x.used||0),0), lnMine = fdays.reduce((s,x)=>s+(x.mine||0),0);
+    const ftDiff = lnMine - lnUsed;
+    // пістолет: видачі за період і ті, що не знайшли запису в додатку
+    const pist = (D.pistol||[]).filter(x => dKey(new Date(x.start)) >= D.from);
+    const pistDays = new Set(pist.map(x => dKey(new Date(x.start))));
+    const pistL = pist.reduce((s,x)=>s+x.liters,0);
+    const mineOnPistDays = outs.filter(r => pistDays.has(r.day)).reduce((s,r)=>s+r.liters,0);
+    const pistLost = pist.filter(x => /БЕЗ ЗАПИСУ/.test(x.res));
     const flagged = recs.filter(r=>stOf(r)==='warn');
     const attention = recs.filter(r=>stOf(r)==='warn' || (consBad(r) && stOf(r)!=='done'))
-      .map(r => ({ r, why: [stOf(r)==='warn' ? r.reason : '', consBad(r) ? `Розхід ${fmt1(r.cons)} ${consUnit(r.machineId)} (${sgn(r.consDev)}% від норми)` : ''].filter(Boolean).join('; ') }));
+      .map(r => ({ r, why: [stOf(r)==='warn' ? r.reason : '', consBad(r) ? `Розхід ${fmt1(r.cons)} ${consUnit(r.machineId)} (${sgn(r.consDev)}% від норми)` : ''].filter(Boolean).join('; ') }))
+      .concat(pistLost.map(x => ({ r: { id:'', ts:x.start, type:'pist', liters:x.liters, card:x.card }, why: 'Видача з пістолета без запису в додатку' })));
     const waiting = recs.filter(r=>stOf(r)==='wait').length;
     if (S.dtab === 'overview') {
       body = `<div class="kpis">
         <div class="tile"><div class="k">Видано ДП</div><div class="v num">${fmt(outL)} <small>л</small></div>${petL?`<div class="hint" style="margin:0">+ бензин ${fmt1(petL)} л</div>`:''}</div>
         <div class="tile"><div class="k">Отримано в КУБ</div><div class="v num">${fmt(inL)} <small>л</small></div></div>
         <div class="tile"><div class="k">У бочці зараз</div><div class="v num">${fmt(D.balance)} <small>л</small></div>${D.level?`<div class="hint" style="margin:0;${Math.abs(D.level.v-D.balance)>50?'color:var(--warn)':''}">лінійка: ${fmt(D.level.v)} л · ${tStr(D.level.t)}</div>`:''}</div>
-        <div class="tile"><div class="k">Різниця з FreeTrack</div><div class="v num" style="color:${Math.abs(ftDiff)>50?'var(--warn)':'var(--fg)'}">${sgn(ftDiff)} <small>л</small></div></div>
+        ${pist.length ? `<div class="tile"><div class="k">Внесено vs пістолет</div><div class="v num" style="color:${pistLost.length || Math.abs(mineOnPistDays-pistL)>Math.max(10,pistL*.03)?'var(--warn)':'var(--ok)'}">${sgn(mineOnPistDays-pistL)} <small>л</small></div><div class="hint" style="margin:0">пістолет ${fmt(pistL)} л${pistLost.length?` · <b style="color:var(--warn)">${pistLost.length} без запису</b>`:''}</div></div>`
+        : `<div class="tile"><div class="k">Внесено vs лінійка</div><div class="v num" style="color:${fdays.length && Math.abs(ftDiff)>Math.max(10,lnUsed*.03)?'var(--warn)':'var(--fg)'}">${fdays.length?sgn(ftDiff):'—'} <small>л</small></div><div class="hint" style="margin:0">${fdays.length?`з бочки пішло ${fmt(lnUsed)} л · пістолет не завантажено`:'дані лінійки ще не надійшли'}</div></div>`}
         <div class="tile"><div class="k">Перевірити</div><div class="v num" style="color:${flagged.length?'var(--warn)':'var(--ok)'}">${flagged.length}<small> · ${waiting} очікує</small></div></div>
       </div>
       ${D.ftConfigured ? '' : `<p class="note" style="color:var(--warn)">FreeTrack ID КУБа не вказано у вкладці «Налаштування» — звірка не працює.</p>`}
       <div class="grid2">
-        <div class="panel"><h3>Видано по днях</h3><p class="s">Внесено заправником проти FreeTrack</p>
-          <div class="legend"><span><i style="background:var(--accent)"></i>Заправник</span><span><i style="background:var(--ft)"></i>FreeTrack</span></div>${chartSvg(recs.filter(r=>!isPet(r)), D.from, D.to)}</div>
+        <div class="panel"><h3>Видано по днях</h3><p class="s">Внесено в додатку проти FreeTrack</p>
+          <div class="legend"><span><i style="background:var(--accent)"></i>Внесено</span><span><i style="background:var(--ft)"></i>${pist.length?'Пістолет (або лінійка)':'Лінійка'}</span></div>${chartSvg(recs.filter(r=>!isPet(r)), D.from, D.to, D.ftDays, pist)}</div>
         <div class="panel"><h3>Потребують уваги</h3><p class="s">Розбіжності, мотогодини, GPS, розхід понад норму</p>
-          ${attention.length ? attention.sort((a,b)=>b.r.ts.localeCompare(a.r.ts)).slice(0,30).map(({r,why})=>`<div class="alert" data-id="${esc(r.id)}"><span class="pill warn">!</span><div style="min-width:0"><div class="t">${esc(r.type==='in'?'Отримання · '+r.place:r.machine)} · ${fmt1(r.liters)} л</div><p class="s">${dShort(r.ts)} ${tStr(r.ts)} · ${esc(why)}</p></div></div>`).join('') : `<div class="empty">Все сходиться</div>`}
+          ${attention.length ? attention.sort((a,b)=>b.r.ts.localeCompare(a.r.ts)).slice(0,30).map(({r,why})=>`<div class="alert" ${r.id?`data-id="${esc(r.id)}"`:''}><span class="pill warn">!</span><div style="min-width:0"><div class="t">${r.type==='pist'?'🔫 Пістолет'+(r.card?' · '+esc(r.card):''):esc(r.type==='in'?'Отримання · '+r.place:r.machine)} · ${fmt1(r.liters)} л</div><p class="s">${dShort(r.ts)} ${tStr(r.ts)} · ${esc(why)}</p></div></div>`).join('') : `<div class="empty">Все сходиться</div>`}
         </div>
       </div>`;
     }
     if (S.dtab === 'log') {
       const q = S.q.toLowerCase();
-      const rows = recs.slice().sort((a,b)=>b.ts.localeCompare(a.ts))
+      const lostRows = pistLost.map(x => ({ id:'', ts:x.start, type:'pist', liters:x.liters, card:x.card, status:'Перевірити', reason:'Видача з пістолета без запису в додатку', machine:'🔫 Пістолет', receiver:x.card, place:'', fueler:'' }));
+      const rows = recs.concat(lostRows).sort((a,b)=>b.ts.localeCompare(a.ts))
         .filter(r => S.filter==='all' || stOf(r)===S.filter)
         .filter(r => !q || (r.machine+' '+r.receiver+' '+r.place+' '+(r.zone||'')+' '+r.fueler).toLowerCase().includes(q));
       body = `<div class="bar-row"><div class="chips">${[['all','Усі'],['warn','Перевірити'],['wait','Очікує'],['ok','Збігається'],['done','Перевірено'],['nf','Без FreeTrack']].map(([k,t])=>`<button class="chip" aria-pressed="${S.filter===k}" data-f="${k}">${t}</button>`).join('')}</div>
         <input class="search" id="sq" type="search" placeholder="Техніка, ПІБ, об'єкт" value="${esc(S.q)}"></div>
       <div class="tablebox"><table><thead><tr><th>Дата</th><th>Техніка / АЗС</th><th>Отримувач</th><th class="n">Показник</th><th class="n">Приріст</th><th class="n">Літри</th><th class="n">FreeTrack</th><th class="n">Різниця</th><th>Max</th><th>Розхід</th><th>Місце</th><th>Заправник</th><th>Статус</th></tr></thead><tbody>
-      ${rows.map(r => { const st = stOf(r); return `<tr class="${st==='warn'?'flag':''}" data-id="${esc(r.id)}">
+      ${rows.map(r => { const st = stOf(r); if (r.type==='pist') return `<tr class="flag"><td class="num">${dShort(r.ts)} ${tStr(r.ts)}</td><td><b>🔫 Пістолет</b></td><td>${esc(r.card||'—')}</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">${fmt1(r.liters)}</td><td class="n">${sgn(r.liters)}</td><td></td><td></td><td></td><td></td><td><span class="pill warn">Без запису</span><div class="why">Видачу не внесено в додатку</div></td></tr>`;
+        return `<tr class="${st==='warn'?'flag':''}" data-id="${esc(r.id)}">
         <td class="num">${dShort(r.ts)} ${tStr(r.ts)}</td>
         <td>${r.type==='in'?'<b style="color:var(--ok)">Отримання</b> · '+esc(r.place):esc(r.machine)}</td>
         <td>${esc(r.receiver||'—')}</td>
         <td class="n">${r.value!=null?fmt1(r.value):'—'}</td>
         <td class="n">${r.delta!=null?sgn(r.delta):'—'}</td>
         <td class="n">${r.type==='in'?'+':''}${fmt1(r.liters)}${isPet(r)?'<div><span class="ptag">бензин</span></div>':''}</td>
-        <td class="n">${r.ft!=null?fmt1(r.ft):'…'}</td>
+        <td class="n">${r.ft!=null?fmt1(r.ft):(r.type==='in'?'…':'—')}</td>
         <td class="n">${r.diff!=null?sgn(r.diff):'—'}</td>
         <td>${r.max?'✓':''}</td>
         <td style="white-space:nowrap">${consCell(r)}</td>
         <td>${r.type==='in'?'':placeTxt(r)}</td>
         <td>${esc(r.fueler)}</td>
-        <td><span class="pill ${st}">${stLabel[st]}</span>${r.reason&&st==='warn'?`<div class="why">${esc(r.reason)}</div>`:''}</td></tr>`; }).join('') || `<tr><td colspan="13" class="empty">Немає записів</td></tr>`}
+        <td><span class="pill ${st}">${stText(r,st)}</span>${r.reason&&st==='warn'?`<div class="why">${esc(r.reason)}</div>`:''}</td></tr>`; }).join('') || `<tr><td colspan="13" class="empty">Немає записів</td></tr>`}
       </tbody></table></div>`;
     }
     if (S.dtab === 'machines') {
@@ -717,6 +731,7 @@ function renderDisp(){
   }
   $('#app').innerHTML = `<div class="wrap wide">
     <div class="top"><span id="sync" class="sync"></span><span>
+      <button class="link" id="pistBtn">Завантажити пістолет</button><input type="file" id="pistFile" accept=".xlsx,.xls,.csv" hidden>
       <button class="link" id="toFuel">Режим заправника</button>
       ${S.refs.sheetUrl?`<a class="link" href="${esc(S.refs.sheetUrl)}" target="_blank" rel="noopener">Таблиця</a>`:''}
       <button class="link" id="out">Вийти</button></span></div>
@@ -733,9 +748,43 @@ function renderDisp(){
   $$('[data-id]').forEach(el => el.onclick = () => openDetail(el.dataset.id));
   if ($('#sq')) $('#sq').oninput = e => { S.q = e.target.value; const pos = e.target.selectionStart; renderDisp(); const n=$('#sq'); n.focus(); n.setSelectionRange(pos,pos); };
   $('#rl').onclick = loadDash;
+  $('#pistBtn').onclick = () => $('#pistFile').click();
+  $('#pistFile').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) importPistol(f); };
   $('#out').onclick = logout;
   $('#toFuel').onclick = () => { S.view='fuel'; renderFuel(); loadDay(true); };
   renderSync();
+}
+
+/* ---- Імпорт звіту FreeTrack «Звіт по заправних станціях» (xlsx / csv) ---- */
+function loadScript(src){ return new Promise((res, rej) => { if (window.XLSX) return res(); const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('Не вдалося завантажити модуль читання Excel')); document.head.appendChild(s); }); }
+function parsePistolRows(rows){
+  const items = []; let day = null;
+  const tm = v => { const m = String(v||'').trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/); return m ? `${pad2(m[1])}:${m[2]}:${m[3]||'00'}` : null; };
+  rows.forEach(r => {
+    const a = String(r[0] ?? '').trim();
+    const dm = a.match(/^(\d{1,2})[./](\d{1,2})[./](\d{2,4})$/);
+    if (dm) { const y = dm[3].length === 2 ? '20' + dm[3] : dm[3]; day = `${y}-${pad2(dm[2])}-${pad2(dm[1])}`; return; }
+    if (!day || !/^\d+$/.test(a)) return;
+    const s = tm(r[1]), e = tm(r[2]);
+    const l = parseFloat(String(r[5] ?? '').replace(',', '.'));
+    if (!s || !(l > 0)) return;
+    items.push({ start: `${day}T${s}`, end: e ? `${day}T${e}` : null, liters: l, card: String(r[4] ?? '').trim() });
+  });
+  return items;
+}
+async function importPistol(file){
+  toast('Читаю файл…');
+  try {
+    await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: '' });
+    const items = parsePistolRows(rows);
+    if (!items.length) throw new Error('Це не схоже на «Звіт по заправних станціях» FreeTrack');
+    const r = await api('pistol', { items });
+    toast(`Пістолет: ${r.total} видач · ✅ ${r.ok}${r.diff?` · ⚠️ ${r.diff}`:''}${r.none?` · 🚨 без запису ${r.none}`:''}${r.missing?` · ❓ немає на пістолеті ${r.missing}`:''}`, 6000);
+    loadDash();
+  } catch(e) { toast(e.message, 5000); }
 }
 
 function openDetail(id){
@@ -755,7 +804,7 @@ function openDetail(id){
         <dt>FreeTrack</dt><dd class="num">${r.ft!=null?fmt1(r.ft)+' л · різниця '+sgn(r.diff):'ще не звірено'}</dd>
         ${r.type==='out'?`<dt>Місце</dt><dd>${placeTxt(r)}${map?` · <a class="link" href="${map}" target="_blank" rel="noopener">карта</a>`:''}${r.acc!=null?` <span class="hint">±${fmt(r.acc)} м</span>`:''}</dd>`:''}
         <dt>Заправник</dt><dd>${esc(r.fueler)}</dd>
-        <dt>Статус</dt><dd><span class="pill ${st}">${stLabel[st]}</span>${r.reason?`<div class="why">${esc(r.reason)}</div>`:''}</dd>
+        <dt>Статус</dt><dd><span class="pill ${st}">${stText(r,st)}</span>${r.reason?`<div class="why">${esc(r.reason)}</div>`:''}</dd>
       </dl></div>
       <div class="field"><label for="nt">Примітка диспетчера</label><textarea id="nt" placeholder="Наприклад: оператор підтвердив по телефону">${esc((r.note||'').replace(/ — [^—]+$/,''))}</textarea></div>
       <div class="two">
