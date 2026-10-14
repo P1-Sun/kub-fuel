@@ -1,5 +1,5 @@
 // Кеш оболонки застосунку: працює без інтернету, оновлюється сам при зв'язку
-const CACHE = 'kub-v1';
+const CACHE = 'kub-v2';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
