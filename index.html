@@ -261,6 +261,7 @@ async function syncQueue(){
     await refreshPending();
     for (const item of pending.sort((a,b)=>a.ts.localeCompare(b.ts))) {
       try {
+        if (item.type === 'out' && !item.machineName) { const mm = (S.refs?.machines||[]).find(x=>x.id===item.machineId); if (mm) Object.assign(item, { machineName: mm.name, machineCat: mm.cat, unit: mm.unit }); }
         const res = await api('add', { rec: item });
         await Q.del(item.clientId);
         if (res && S.refs?.user?.role === 'Диспетчер') {
@@ -335,7 +336,7 @@ function renderFuel(){
   const u = S.refs.user;
   const todayK = dKey(new Date());
   const day = S.day && S.day.date === todayK ? S.day : { records: [], balance: S.day?.balance ?? null, dayStart: S.day?.balance ?? null };
-  const pend = pending.map(p => ({ ...p, machine: (S.refs.machines.find(m=>m.id===p.machineId)||{}).name || '', pendingLocal: true }));
+  const pend = pending.map(p => ({ ...p, machine: (S.refs.machines.find(m=>m.id===p.machineId)||{}).name || p.machineName || p.machineId || '', pendingLocal: true }));
   const recs = [...day.records, ...pend].sort((a,b)=> (b.ts||'').localeCompare(a.ts||''));
   const dp = recs.filter(r=>!isPet(r));
   const inL = dp.filter(r=>r.type==='in').reduce((s,r)=>s+(+r.liters||0),0);
@@ -424,6 +425,8 @@ function photoInput(id, boxId, hintId, onPick){
 
 /* ---- заправка техніки ---- */
 function openOut(){
+  // свіжий довідник техніки у фоні (наступного разу список буде актуальний)
+  if (navigator.onLine) api('refs').then(r => { S.refs = r; ls.set('refs', r); }).catch(()=>{});
   const R = S.refs;
   const cats = [...R.categories.filter(c => R.machines.some(m=>m.cat===c)), 'Усі'];
   const f = { cat: cats[0] || 'Спецтехніка', q:'', machine:null, receiver:'', value:'', liters:'', max:true, file:null, geo:null, ts: null, fuel:'ДП' };
@@ -534,7 +537,7 @@ function openOut(){
         g ? `${g.lat.toFixed(5)}, ${g.lon.toFixed(5)} ±${Math.round(g.acc)}м` : 'GPS не визначено',
         S.refs.user.name
       ]);
-      const rec = { clientId: uid(), type:'out', ts, machineId: m.id, receiver: f.receiver.trim(), value: nm ? null : +f.value, liters: +f.liters, max: nm ? false : f.max, fuel: f.fuel,
+      const rec = { clientId: uid(), type:'out', ts, machineId: m.id, machineName: m.name, machineCat: m.cat, unit: m.unit, receiver: f.receiver.trim(), value: nm ? null : +f.value, liters: +f.liters, max: nm ? false : f.max, fuel: f.fuel,
         lat: g?.lat ?? null, lon: g?.lon ?? null, acc: g?.acc ?? null, photo };
       await saveRec(rec);
       if (!nm) { R.last = R.last || {}; R.last[m.id] = { val: +f.value, ts }; ls.set('refs', R); }
