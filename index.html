@@ -220,6 +220,8 @@ function distM(a1,o1,a2,o2){ const r=x=>x*Math.PI/180; const da=r(a2-a1), dn=r(o
 
 const FUELS = ['ДП','Бензин'];
 const isPet = r => r.fuel === 'Бензин';
+const isDir = r => r.src === 'azs';      // заправка напряму на АЗС — не через КУБ
+const azsTag = r => isDir(r) ? ' <span class="ptag" style="background:var(--info)">АЗС</span>' : '';
 const fuelSw = (id) => `<div class="fsw" role="group" aria-label="Тип пального" id="${id}">${FUELS.map((x,i)=>`<button type="button" data-fu="${x}" aria-pressed="${i===0}">${x}</button>`).join('')}</div>`;
 function bindFuelSw(id, onChange){ $$('#'+id+' [data-fu]').forEach(b => b.onclick = () => { $$('#'+id+' [data-fu]').forEach(x=>x.setAttribute('aria-pressed', x===b)); onChange(b.dataset.fu); }); }
 const ptag = r => isPet(r) ? ' <span class="ptag">бензин</span>' : '';
@@ -338,11 +340,12 @@ function renderFuel(){
   const day = S.day && S.day.date === todayK ? S.day : { records: [], balance: S.day?.balance ?? null, dayStart: S.day?.balance ?? null };
   const pend = pending.map(p => ({ ...p, machine: (S.refs.machines.find(m=>m.id===p.machineId)||{}).name || p.machineName || p.machineId || '', pendingLocal: true }));
   const recs = [...day.records, ...pend].sort((a,b)=> (b.ts||'').localeCompare(a.ts||''));
-  const dp = recs.filter(r=>!isPet(r));
+  const dp = recs.filter(r=>!isPet(r) && !isDir(r));
+  const dirOut = recs.filter(r=>isDir(r)).reduce((s,r)=>s+(+r.liters||0),0);
   const inL = dp.filter(r=>r.type==='in').reduce((s,r)=>s+(+r.liters||0),0);
   const outL = dp.filter(r=>r.type==='out').reduce((s,r)=>s+(+r.liters||0),0);
   const petOut = recs.filter(r=>isPet(r)&&r.type==='out').reduce((s,r)=>s+(+r.liters||0),0);
-  const pendDelta = pend.filter(r=>!isPet(r)).reduce((s,r)=>s+(r.type==='in'?1:-1)*(+r.liters||0),0);
+  const pendDelta = pend.filter(r=>!isPet(r) && !isDir(r)).reduce((s,r)=>s+(r.type==='in'?1:-1)*(+r.liters||0),0);
   const left = day.balance == null ? null : day.balance + pendDelta;
   const dateStr = new Date().toLocaleDateString('uk-UA',{weekday:'long',day:'numeric',month:'long'});
   $('#app').innerHTML = `<div class="wrap">
@@ -354,7 +357,7 @@ function renderFuel(){
       <div class="tile"><div class="k">Видано</div><div class="v num">${fmt(outL)} <small>л</small></div></div>
       <div class="tile"><div class="k">У бочці</div><div class="v num">${fmt(left)} <small>л</small></div></div>
     </div>
-    ${petOut ? `<p class="note" style="margin-top:8px">Цифри вище — дизель. Бензину видано сьогодні: ${fmt1(petOut)} л</p>` : ''}
+    ${petOut || dirOut ? `<p class="note" style="margin-top:8px">Цифри вище — дизель через КУБ.${petOut?` Бензину видано: ${fmt1(petOut)} л.`:''}${dirOut?` Напряму на АЗС: ${fmt1(dirOut)} л.`:''}</p>` : ''}
     <div class="actions">
       <button class="btn" id="bOut">Заправити техніку</button>
       <button class="btn sec" id="bIn">Отримати пальне в КУБ</button>
@@ -363,7 +366,7 @@ function renderFuel(){
     <div class="list">${recs.length ? recs.map(r => r.type==='in' ? `
       <div class="row"><div class="ico in">+</div><div class="main"><div class="t">Отримано${isPet(r)?'':' в КУБ'}${ptag(r)}</div><div class="s">${tStr(r.ts)} · ${esc(r.place)}${r.pendingLocal?` · <span class="tag">${r.error?esc(r.error):'очікує мережі'}</span>`:''}</div></div><div class="r"><div class="l num">+${fmt1(r.liters)} л</div></div></div>` : `
       <div class="row"><div class="ico out">−</div>
-        <div class="main"><div class="t">${esc(r.machine)}${ptag(r)}</div><div class="s num">${tStr(r.ts)}${r.value!=null&&r.value!==''?' · '+fmt1(+r.value):''} · ${esc(r.receiver||'')}${r.max?' · до повного':''}${r.pendingLocal?` · <span class="tag">${r.error?esc(r.error):'очікує мережі'}</span>`:''}</div></div>
+        <div class="main"><div class="t">${esc(r.machine)}${ptag(r)}${azsTag(r)}</div><div class="s num">${tStr(r.ts)}${r.value!=null&&r.value!==''?' · '+fmt1(+r.value):''} · ${esc(r.receiver||'')}${r.max?' · до повного':''}${r.pendingLocal?` · <span class="tag">${r.error?esc(r.error):'очікує мережі'}</span>`:''}</div></div>
         <div class="r"><div class="l num">−${fmt1(r.liters)} л</div></div></div>`).join('') : `<div class="empty">Ще немає записів за сьогодні</div>`}
     </div>
     <p class="note">Збережені записи змінює тільки диспетчер. Якщо зв'язку немає, записи чекають у телефоні й надсилаються самі.</p>
@@ -439,6 +442,8 @@ function openOut(){
         <div class="field" id="valBox"><label for="val" id="valL">Мотогодини</label><input type="number" inputmode="decimal" step="0.1" id="val" placeholder="0"><div class="hint" id="valH"></div></div>
         <div class="field"><label for="lt">Літри</label><input type="number" inputmode="decimal" step="0.1" id="lt" placeholder="0">${fuelSw('fuO')}</div>
       </div>
+      <div class="field toggle"><div><div style="font-weight:550">Заправка на АЗС, не з КУБа</div><div class="hint" style="margin:0">Рідко: техніку заправили одразу на заправці</div></div><label class="sw"><input type="checkbox" id="direct"><span></span></label></div>
+      <div id="azsBox" hidden><span class="lbl" style="margin-left:4px">АЗС</span><div class="chips" id="azsOut"></div></div>
       <div class="field toggle" id="maxBox"><div><div style="font-weight:550">Заправлено до повного</div><div class="hint" style="margin:0">Для розрахунку розходу</div></div><label class="sw"><input type="checkbox" id="max" checked><span></span></label></div>
       <label class="field photo" for="ph"><div class="ph" id="phB">+</div><div><div style="font-weight:550" id="phT">Фото лічильника</div><div class="hint" style="margin:0" id="phH">Обов'язково, з камери</div></div>
         <input type="file" id="ph" accept="image/*" capture="environment" hidden></label>
@@ -509,6 +514,9 @@ function openOut(){
   $('#lt').oninput = e => f.liters = e.target.value;
   $('#max').onchange = e => f.max = e.target.checked;
   bindFuelSw('fuO', v => f.fuel = v);
+  f.direct = false; f.azs = R.azs[0] || '';
+  const drawAzs = () => { $('#azsOut').innerHTML = R.azs.map(a=>`<button class="chip" aria-pressed="${a===f.azs}" data-ao="${esc(a)}">${esc(a)}</button>`).join('') || '<span class="hint">Додайте АЗС у таблицю</span>'; $$('[data-ao]').forEach(b=>b.onclick=()=>{ f.azs=b.dataset.ao; drawAzs(); }); };
+  $('#direct').onchange = e => { f.direct = e.target.checked; $('#azsBox').hidden = !f.direct; drawAzs(); };
   photoInput('ph','phB','phH', file => { f.file = file; f.ts = new Date().toISOString(); });
   getGeo().then(g => {
     if (!$('#gT')) return;
@@ -537,7 +545,7 @@ function openOut(){
         g ? `${g.lat.toFixed(5)}, ${g.lon.toFixed(5)} ±${Math.round(g.acc)}м` : 'GPS не визначено',
         S.refs.user.name
       ]);
-      const rec = { clientId: uid(), type:'out', ts, machineId: m.id, machineName: m.name, machineCat: m.cat, unit: m.unit, receiver: f.receiver.trim(), value: nm ? null : +f.value, liters: +f.liters, max: nm ? false : f.max, fuel: f.fuel,
+      const rec = { clientId: uid(), type:'out', ts, machineId: m.id, machineName: m.name, machineCat: m.cat, unit: m.unit, receiver: f.receiver.trim(), value: nm ? null : +f.value, liters: +f.liters, max: nm ? false : f.max, fuel: f.fuel, src: f.direct ? 'azs' : '', place: f.direct ? f.azs : '',
         lat: g?.lat ?? null, lon: g?.lon ?? null, acc: g?.acc ?? null, photo };
       await saveRec(rec);
       if (!nm) { R.last = R.last || {}; R.last[m.id] = { val: +f.value, ts }; ls.set('refs', R); }
@@ -618,11 +626,11 @@ function stOf(r){
   if (r.status === 'Перевірено') return 'done';
   if (r.status === 'Перевірити') return 'warn';
   if (r.status === 'Збігається') return 'ok';
-  if (r.status === 'Без FreeTrack') return 'nf';
+  if (r.status === 'Без FreeTrack' || r.status === 'Напряму з АЗС') return 'nf';
   return 'wait';
 }
 const stLabel = { done:'Перевірено', warn:'Перевірити', ok:'Збігається', wait:'Очікує FreeTrack', nf:'Без FreeTrack' };
-const stText = (r, st) => st==='wait' && r.type==='out' ? 'Звірка за день' : stLabel[st];
+const stText = (r, st) => st==='wait' && r.type==='out' ? 'Звірка за день' : st==='nf' && r.status ? r.status : stLabel[st];
 
 /* Місце: геозона FreeTrack (де стояв КУБ) має перевагу над GPS телефона */
 const placeTxt = r => r.zone && r.zone !== 'поза геозонами' ? `${esc(r.zone)} <span class="hint">FT</span>` : esc(r.place);
@@ -684,8 +692,9 @@ function renderDisp(){
   let body = '<div class="empty"><span class="spin"></span></div>';
   if (D) {
     const recs = D.records.filter(r=>r.inPeriod);
-    const outs = recs.filter(r=>r.type==='out' && !isPet(r)), ins = recs.filter(r=>r.type==='in' && !isPet(r));
-    const petL = recs.filter(r=>r.type==='out' && isPet(r)).reduce((s,r)=>s+r.liters,0);
+    const dirL = recs.filter(r=>r.type==='out' && isDir(r)).reduce((s,r)=>s+r.liters,0);
+    const outs = recs.filter(r=>r.type==='out' && !isPet(r) && !isDir(r)), ins = recs.filter(r=>r.type==='in' && !isPet(r));
+    const petL = recs.filter(r=>r.type==='out' && isPet(r) && !isDir(r)).reduce((s,r)=>s+r.liters,0);
     const outL = outs.reduce((s,r)=>s+r.liters,0), inL = ins.reduce((s,r)=>s+r.liters,0);
     const fdays = (D.ftDays||[]).filter(x => x.day >= D.from);
     const lnUsed = fdays.reduce((s,x)=>s+(x.used||0),0), lnMine = fdays.reduce((s,x)=>s+(x.mine||0),0);
@@ -703,7 +712,7 @@ function renderDisp(){
     const waiting = recs.filter(r=>stOf(r)==='wait').length;
     if (S.dtab === 'overview') {
       body = `<div class="kpis">
-        <div class="tile"><div class="k">Видано ДП</div><div class="v num">${fmt(outL)} <small>л</small></div>${petL?`<div class="hint" style="margin:0">+ бензин ${fmt1(petL)} л</div>`:''}</div>
+        <div class="tile"><div class="k">Видано ДП</div><div class="v num">${fmt(outL)} <small>л</small></div>${petL?`<div class="hint" style="margin:0">+ бензин ${fmt1(petL)} л</div>`:''}${dirL?`<div class="hint" style="margin:0">+ напряму з АЗС ${fmt1(dirL)} л</div>`:''}</div>
         <div class="tile"><div class="k">Отримано в КУБ</div><div class="v num">${fmt(inL)} <small>л</small></div></div>
         <div class="tile"><div class="k">У бочці зараз</div><div class="v num">${fmt(D.balance)} <small>л</small></div>${D.level?`<div class="hint" style="margin:0;${Math.abs(D.level.v-D.balance)>50?'color:var(--warn)':''}">лінійка: ${fmt(D.level.v)} л · ${tStr(D.level.t)}</div>`:''}</div>
         ${pist.length ? `<div class="tile"><div class="k">Внесено vs пістолет</div><div class="v num" style="color:${pistLost.length || Math.abs(mineOnPistDays-pistL)>Math.max(10,pistL*.03)?'var(--warn)':'var(--ok)'}">${sgn(mineOnPistDays-pistL)} <small>л</small></div><div class="hint" style="margin:0">пістолет ${fmt(pistL)} л${pistLost.length?` · <b style="color:var(--warn)">${pistLost.length} без запису</b>`:''}</div></div>`
@@ -713,7 +722,7 @@ function renderDisp(){
       ${D.ftConfigured ? '' : `<p class="note" style="color:var(--warn)">FreeTrack ID КУБа не вказано у вкладці «Налаштування» — звірка не працює.</p>`}
       <div class="grid2">
         <div class="panel"><h3>Видано по днях</h3><p class="s">Внесено в додатку проти FreeTrack</p>
-          <div class="legend"><span><i style="background:var(--accent)"></i>Внесено</span><span><i style="background:var(--ft)"></i>${pist.length?'Пістолет (або лінійка)':'Лінійка'}</span></div>${chartSvg(recs.filter(r=>!isPet(r)), D.from, D.to, D.ftDays, pist)}</div>
+          <div class="legend"><span><i style="background:var(--accent)"></i>Внесено</span><span><i style="background:var(--ft)"></i>${pist.length?'Пістолет (або лінійка)':'Лінійка'}</span></div>${chartSvg(recs.filter(r=>!isPet(r) && !isDir(r)), D.from, D.to, D.ftDays, pist)}</div>
         <div class="panel"><h3>Потребують уваги</h3><p class="s">Розбіжності, мотогодини, GPS, розхід понад норму</p>
           ${attention.length ? attention.sort((a,b)=>b.r.ts.localeCompare(a.r.ts)).slice(0,30).map(({r,why})=>`<div class="alert" ${r.id?`data-id="${esc(r.id)}"`:''}><span class="pill warn">!</span><div style="min-width:0"><div class="t">${r.type==='pist'?'🔫 Пістолет'+(r.card?' · '+esc(r.card):''):esc(r.type==='in'?'Отримання · '+r.place:r.machine)} · ${fmt1(r.liters)} л</div><p class="s">${dShort(r.ts)} ${tStr(r.ts)} · ${esc(why)}</p></div></div>`).join('') : `<div class="empty">Все сходиться</div>`}
         </div>
@@ -731,7 +740,7 @@ function renderDisp(){
       ${rows.map(r => { const st = stOf(r); if (r.type==='pist') return `<tr class="flag"><td class="num">${dShort(r.ts)} ${tStr(r.ts)}</td><td><b>🔫 Пістолет</b></td><td>${esc(r.card||'—')}</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">${fmt1(r.liters)}</td><td class="n">${sgn(r.liters)}</td><td></td><td></td><td></td><td></td><td><span class="pill warn">Без запису</span><div class="why">Видачу не внесено в додатку</div></td></tr>`;
         return `<tr class="${st==='warn'?'flag':''}" data-id="${esc(r.id)}">
         <td class="num">${dShort(r.ts)} ${tStr(r.ts)}</td>
-        <td>${r.type==='in'?'<b style="color:var(--ok)">Отримання</b> · '+esc(r.place):esc(r.machine)}</td>
+        <td>${r.type==='in'?'<b style="color:var(--ok)">Отримання</b> · '+esc(r.place):esc(r.machine)+azsTag(r)}</td>
         <td>${esc(r.receiver||'—')}</td>
         <td class="n">${r.value!=null?fmt1(r.value):'—'}</td>
         <td class="n">${r.delta!=null?sgn(r.delta):'—'}</td>
@@ -850,12 +859,24 @@ function openDetail(id){
         <dt>Заправник</dt><dd>${esc(r.fueler)}</dd>
         <dt>Статус</dt><dd><span class="pill ${st}">${stText(r,st)}</span>${r.reason?`<div class="why">${esc(r.reason)}</div>`:''}</dd>
       </dl></div>
-      <div class="field"><label for="nt">Примітка диспетчера</label><textarea id="nt" placeholder="Наприклад: оператор підтвердив по телефону">${esc((r.note||'').replace(/ — [^—]+$/,''))}</textarea></div>
+      <div class="field"><label for="nt">Примітка диспетчера</label><textarea id="nt" placeholder="Наприклад: оператор підтвердив по телефону">${esc(r.note||'')}</textarea></div>
       <div class="two">
         <button class="btn small sec" id="saveNote">Зберегти примітку</button>
         ${st==='done'?`<button class="btn small sec" id="unmark">Повернути на перевірку</button>`:`<button class="btn small" id="mark">Позначити перевіреним</button>`}
       </div>
+      <div class="two">
+        <button class="btn small sec" id="editRec">✎ Виправити запис</button>
+        <button class="btn small sec" id="delRec" style="color:var(--warn)">Видалити запис</button>
+      </div>
     </div></div></div>`;
+  $('#editRec').onclick = () => openEdit(r);
+  $('#delRec').onclick = async () => {
+    const b = $('#delRec');
+    if (!b.dataset.sure) { b.dataset.sure = 1; b.textContent = 'Точно видалити? Натисніть ще раз'; b.style.background = 'var(--warn-soft)'; return; }
+    b.disabled = true; b.innerHTML = '<span class="spin"></span>';
+    try { await api('del', { id: r.id, reason: $('#nt').value }); toast('Запис видалено (копія — в аркуші «Видалені»)'); $('#layer').innerHTML=''; loadDash(); }
+    catch(e) { toast(e.message); b.disabled = false; b.textContent = 'Видалити запис'; }
+  };
   $('#x').onclick = () => $('#layer').innerHTML = '';
   const send = async (payload, msg) => {
     try { await api('mark', { id: r.id, ...payload }); toast(msg); $('#layer').innerHTML=''; loadDash(); }
@@ -864,6 +885,59 @@ function openDetail(id){
   $('#saveNote').onclick = () => send({ note: $('#nt').value }, 'Примітку збережено');
   if ($('#mark')) $('#mark').onclick = () => send({ status: 'Перевірено', note: $('#nt').value }, 'Позначено перевіреним');
   if ($('#unmark')) $('#unmark').onclick = () => send({ status: 'Перевірити' }, 'Повернуто на перевірку');
+}
+
+/* ---- Виправлення запису (диспетчер) ---- */
+function openEdit(r){
+  const R = S.refs, out = r.type === 'out';
+  const ms = R.machines.slice().sort((a,b)=> (a.cat+a.name).localeCompare(b.cat+b.name, 'uk'));
+  const cur = R.machines.find(m=>m.id===r.machineId);
+  const pad = n => String(n).padStart(2,'0'), d = new Date(r.ts);
+  const loc = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const f = { fuel: r.fuel || 'ДП', src: r.src || '' };
+  $('#layer').innerHTML = `<div class="scrim mid"><div class="sheet center" role="dialog" aria-label="Виправлення">
+    <div class="sheet-head c3"><button class="link" id="x">Скасувати</button><b>Виправлення</b><span></span></div>
+    <div class="stack">
+      ${out ? `<div class="field"><label for="eM">Техніка</label><select id="eM" style="width:100%;border:0;background:transparent;font-size:17px;font-weight:600;padding:4px 0">
+        ${cur?'':`<option value="${esc(r.machineId)}" selected>⚠️ ${esc(r.machine)} (немає в довіднику)</option>`}
+        ${ms.map(m=>`<option value="${esc(m.id)}" ${m.id===r.machineId?'selected':''}>${esc(m.cat)} · ${esc(m.name)}</option>`).join('')}</select></div>
+      <div class="field"><label for="eR">Отримувач</label><input type="text" id="eR" value="${esc(r.receiver||'')}"></div>` : `
+      <div class="field"><label for="eP">АЗС</label><input type="text" id="eP" value="${esc(r.place||'')}"></div>`}
+      <div class="two">
+        ${out ? `<div class="field" id="eVb"><label for="eV">Показник</label><input type="number" step="0.1" inputmode="decimal" id="eV" value="${r.value??''}"></div>` : ''}
+        <div class="field"><label for="eL">Літри</label><input type="number" step="0.1" inputmode="decimal" id="eL" value="${r.liters}">${fuelSw('eF')}</div>
+      </div>
+      ${out ? `<div class="field toggle" id="eXb"><div style="font-weight:550">До повного</div><label class="sw"><input type="checkbox" id="eX" ${r.max?'checked':''}><span></span></label></div>
+      <div class="field toggle"><div><div style="font-weight:550">Напряму на АЗС, не з КУБа</div><div class="hint" style="margin:0">Не впливає на бочку і звірку з пістолетом</div></div><label class="sw"><input type="checkbox" id="eS" ${r.src==='azs'?'checked':''}><span></span></label></div>` : ''}
+      <div class="field"><label for="eT">Дата і час</label><input type="datetime-local" id="eT" value="${loc}" style="width:100%;border:0;background:transparent;font-size:17px;padding:4px 0"></div>
+      <div class="field"><label for="eN">Що виправлено / чому</label><input type="text" id="eN" placeholder="Напр.: звірив з фото"></div>
+      <div class="hint">Кожна зміна запишеться в примітку запису з вашим ім'ям і часом. Розхід, приріст мотогодин і звірка з пістолетом перерахуються.</div>
+      <div class="hint bad" id="err" hidden></div>
+      <button class="btn send" id="eSave">Зберегти виправлення</button>
+    </div></div></div>`;
+  $$('#eF [data-fu]').forEach(b => b.setAttribute('aria-pressed', b.dataset.fu === f.fuel));
+  bindFuelSw('eF', v => f.fuel = v);
+  const unitSync = () => { if (!out) return; const m = R.machines.find(x=>x.id===$('#eM').value); const nm = m && m.unit === 'none'; $('#eVb').hidden = nm; $('#eXb').hidden = nm; };
+  if (out) { $('#eM').onchange = unitSync; unitSync(); }
+  $('#x').onclick = () => openDetail(r.id);
+  $('#eSave').onclick = async () => {
+    const ch = {};
+    if (out) {
+      if ($('#eM').value !== r.machineId) ch.machineId = $('#eM').value;
+      if ($('#eR').value.trim() !== (r.receiver||'')) ch.receiver = $('#eR').value;
+      if (!$('#eVb').hidden && String($('#eV').value) !== String(r.value ?? '')) ch.value = $('#eV').value;
+      if (!$('#eXb').hidden && $('#eX').checked !== !!r.max) ch.max = $('#eX').checked;
+      if ($('#eS').checked !== (r.src==='azs')) ch.src = $('#eS').checked ? 'azs' : '';
+    } else if ($('#eP').value !== (r.place||'')) ch.place = $('#eP').value;
+    if (+$('#eL').value !== +r.liters) ch.liters = $('#eL').value;
+    if (f.fuel !== (r.fuel||'ДП')) ch.fuel = f.fuel;
+    if ($('#eT').value && $('#eT').value !== loc) ch.ts = $('#eT').value + ':00';
+    const note = $('#eN').value.trim();
+    if (!Object.keys(ch).length && !note) { $('#err').hidden = false; $('#err').textContent = 'Нічого не змінено'; return; }
+    $('#eSave').disabled = true; $('#eSave').innerHTML = '<span class="spin"></span> Зберігаю…';
+    try { await api('edit', { id: r.id, changes: ch, note }); toast('Виправлено. Розхід і звірку перераховано'); $('#layer').innerHTML=''; await loadDash(); }
+    catch(e) { $('#err').hidden = false; $('#err').textContent = e.message; $('#eSave').disabled = false; $('#eSave').textContent = 'Зберегти виправлення'; }
+  };
 }
 
 /* ===================== СТАРТ ===================== */
