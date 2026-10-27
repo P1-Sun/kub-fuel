@@ -107,6 +107,7 @@ h2{font-size:13px;font-weight:500;color:var(--muted);text-transform:uppercase;le
 .fsw button{border:0;background:transparent;font-size:13px;font-weight:600;padding:4px 12px;border-radius:6px;color:var(--muted)}
 .fsw button[aria-pressed="true"]{background:var(--card);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.12)}
 .fsw button[data-fu="Бензин"][aria-pressed="true"]{background:var(--accent);color:#fff}
+.fsw button[data-fu="Газ"][aria-pressed="true"]{background:#3b82f6;color:#fff}
 .two.one{grid-template-columns:1fr}
 .ptag{display:inline-block;font-size:11px;font-weight:700;padding:1px 6px;border-radius:6px;background:var(--accent);color:#fff;vertical-align:1px}
 .field{background:var(--card);border-radius:12px;padding:10px 14px}
@@ -218,13 +219,15 @@ function driveId(url){ const m = String(url||'').match(/\/d\/([\w-]+)/); return 
 function thumb(url, w=400){ const id = driveId(url); return id ? `https://drive.google.com/thumbnail?id=${id}&sz=w${w}` : ''; }
 function distM(a1,o1,a2,o2){ const r=x=>x*Math.PI/180; const da=r(a2-a1), dn=r(o2-o1); const h=Math.sin(da/2)**2+Math.cos(r(a1))*Math.cos(r(a2))*Math.sin(dn/2)**2; return 2*6371000*Math.asin(Math.sqrt(h)); }
 
-const FUELS = ['ДП','Бензин'];
+const FUELS = ['ДП','Бензин','Газ'];
 const isPet = r => r.fuel === 'Бензин';
 const isDir = r => r.src === 'azs';      // заправка напряму на АЗС — не через КУБ
 const azsTag = r => isDir(r) ? ' <span class="ptag" style="background:var(--info)">АЗС</span>' : '';
-const fuelSw = (id) => `<div class="fsw" role="group" aria-label="Тип пального" id="${id}">${FUELS.map((x,i)=>`<button type="button" data-fu="${x}" aria-pressed="${i===0}">${x}</button>`).join('')}</div>`;
+const fuelSw = (id, list = FUELS) => `<div class="fsw" role="group" aria-label="Тип пального" id="${id}">${list.map((x,i)=>`<button type="button" data-fu="${x}" aria-pressed="${i===0}">${x}</button>`).join('')}</div>`;
 function bindFuelSw(id, onChange){ $$('#'+id+' [data-fu]').forEach(b => b.onclick = () => { $$('#'+id+' [data-fu]').forEach(x=>x.setAttribute('aria-pressed', x===b)); onChange(b.dataset.fu); }); }
-const ptag = r => isPet(r) ? ' <span class="ptag">бензин</span>' : '';
+const isGas = r => r.fuel === 'Газ';
+const isBrig = () => S.refs?.user?.role === 'Бригадир';
+const ptag = r => isPet(r) ? ' <span class="ptag">бензин</span>' : isGas(r) ? ' <span class="ptag" style="background:#3b82f6">газ</span>' : '';
 
 /* ===================== API ===================== */
 const S = { pin: ls.get('pin', null), refs: ls.get('refs', null), view: null, day: ls.get('day', null), dash: null, period: 'today', cfrom: null, cto: null, dtab: 'overview', filter: 'all', q: '' };
@@ -350,17 +353,17 @@ function renderFuel(){
   const dateStr = new Date().toLocaleDateString('uk-UA',{weekday:'long',day:'numeric',month:'long'});
   $('#app').innerHTML = `<div class="wrap">
     <div class="top"><span id="sync" class="sync"></span><span>${u.role==='Диспетчер'?'<button class="link" id="toDisp">Панель диспетчера</button>':''}<button class="link" id="out">Вийти</button></span></div>
-    <h1>КУБ · сьогодні</h1>
+    <h1>${isBrig()?'Заправки на АЗС':'КУБ · сьогодні'}</h1>
     <p class="sub">${esc(dateStr)} · ${esc(u.name)}</p>
-    <div class="tiles">
+    ${isBrig() ? `<div class="tiles" style="grid-template-columns:1fr"><div class="tile"><div class="k">Внесено сьогодні</div><div class="v num">${fmt1(recs.reduce((s,r)=>s+(+r.liters||0),0))} <small>л · ${recs.length} заправ.</small></div></div></div>` : `<div class="tiles">
       <div class="tile"><div class="k">Отримано</div><div class="v num">${fmt(inL)} <small>л</small></div></div>
       <div class="tile"><div class="k">Видано</div><div class="v num">${fmt(outL)} <small>л</small></div></div>
       <div class="tile"><div class="k">У бочці</div><div class="v num">${fmt(left)} <small>л</small></div></div>
-    </div>
-    ${petOut || dirOut ? `<p class="note" style="margin-top:8px">Цифри вище — дизель через КУБ.${petOut?` Бензину видано: ${fmt1(petOut)} л.`:''}${dirOut?` Напряму на АЗС: ${fmt1(dirOut)} л.`:''}</p>` : ''}
+    </div>`}
+    ${!isBrig() && (petOut || dirOut) ? `<p class="note" style="margin-top:8px">Цифри вище — дизель через КУБ.${petOut?` Бензину видано: ${fmt1(petOut)} л.`:''}${dirOut?` Напряму на АЗС: ${fmt1(dirOut)} л.`:''}</p>` : ''}
     <div class="actions">
-      <button class="btn" id="bOut">Заправити техніку</button>
-      <button class="btn sec" id="bIn">Отримати пальне в КУБ</button>
+      <button class="btn" id="bOut">${isBrig()?'Внести заправку на АЗС':'Заправити техніку'}</button>
+      ${isBrig()?'':'<button class="btn sec" id="bIn">Отримати пальне в КУБ</button>'}
     </div>
     <h2>Відомість за день</h2>
     <div class="list">${recs.length ? recs.map(r => r.type==='in' ? `
@@ -372,7 +375,7 @@ function renderFuel(){
     <p class="note">Збережені записи змінює тільки диспетчер. Якщо зв'язку немає, записи чекають у телефоні й надсилаються самі.</p>
   </div>`;
   $('#bOut').onclick = openOut;
-  $('#bIn').onclick = openIn;
+  if ($('#bIn')) $('#bIn').onclick = openIn;
   $('#out').onclick = logout;
   if ($('#toDisp')) $('#toDisp').onclick = () => { S.view='disp'; renderDisp(); loadDash(); };
   renderSync();
@@ -442,7 +445,7 @@ function openOut(){
         <div class="field" id="valBox"><label for="val" id="valL">Мотогодини</label><input type="number" inputmode="decimal" step="0.1" id="val" placeholder="0"><div class="hint" id="valH"></div></div>
         <div class="field"><label for="lt">Літри</label><input type="number" inputmode="decimal" step="0.1" id="lt" placeholder="0">${fuelSw('fuO')}</div>
       </div>
-      <div class="field toggle"><div><div style="font-weight:550">Заправка на АЗС, не з КУБа</div><div class="hint" style="margin:0">Рідко: техніку заправили одразу на заправці</div></div><label class="sw"><input type="checkbox" id="direct"><span></span></label></div>
+      <div class="field toggle" id="dirBox" ${isBrig()?'hidden':''}><div><div style="font-weight:550">Заправка на АЗС, не з КУБа</div><div class="hint" style="margin:0">Рідко: техніку заправили одразу на заправці</div></div><label class="sw"><input type="checkbox" id="direct"><span></span></label></div>
       <div id="azsBox" hidden><span class="lbl" style="margin-left:4px">АЗС</span><div class="chips" id="azsOut"></div></div>
       <div class="field toggle" id="maxBox"><div><div style="font-weight:550">Заправлено до повного</div><div class="hint" style="margin:0">Для розрахунку розходу</div></div><label class="sw"><input type="checkbox" id="max" checked><span></span></label></div>
       <label class="field photo" for="ph"><div class="ph" id="phB">+</div><div><div style="font-weight:550" id="phT">Фото лічильника</div><div class="hint" style="margin:0" id="phH">Обов'язково, з камери</div></div>
@@ -490,7 +493,8 @@ function openOut(){
   const applyUnit = () => {
     const nm = noMeter();
     $('#valBox').hidden = nm; $('#maxBox').hidden = nm; $('#twoBox').classList.toggle('one', nm);
-    $('#phT').textContent = nm ? 'Фото (за бажанням)' : 'Фото лічильника';
+    $('#phT').textContent = nm ? 'Фото (за бажанням)' : (f.direct ? 'Фото чека або лічильника' : 'Фото лічильника');
+    $('#valL').textContent = (m0 => m0 && m0.unit === 'км' ? 'Пробіг, км' : 'Мотогодини')(f.machine && R.machines.find(x=>x.id===f.machine)) + (f.direct ? ' (бажано)' : '');
     if (!f.file) $('#phH').textContent = nm ? 'Можна без фото' : "Обов'язково, з камери";
   };
   const valHint = () => {
@@ -513,10 +517,13 @@ function openOut(){
   $('#val').oninput = e => { f.value = e.target.value; valHint(); };
   $('#lt').oninput = e => f.liters = e.target.value;
   $('#max').onchange = e => f.max = e.target.checked;
-  bindFuelSw('fuO', v => f.fuel = v);
   f.direct = false; f.azs = R.azs[0] || '';
+  const setDirect = on => { f.direct = on; $('#direct').checked = on; $('#azsBox').hidden = !on; drawAzs(); applyUnit(); };
+  // газ заправляють лише на АЗС (балон гудронатора) → автоматично «напряму з АЗС»
+  bindFuelSw('fuO', v => { f.fuel = v; if (v === 'Газ') setDirect(true); });
   const drawAzs = () => { $('#azsOut').innerHTML = R.azs.map(a=>`<button class="chip" aria-pressed="${a===f.azs}" data-ao="${esc(a)}">${esc(a)}</button>`).join('') || '<span class="hint">Додайте АЗС у таблицю</span>'; $$('[data-ao]').forEach(b=>b.onclick=()=>{ f.azs=b.dataset.ao; drawAzs(); }); };
-  $('#direct').onchange = e => { f.direct = e.target.checked; $('#azsBox').hidden = !f.direct; drawAzs(); };
+  $('#direct').onchange = e => { if (!e.target.checked && f.fuel === 'Газ') { e.target.checked = true; return toast('Газ заправляють тільки на АЗС'); } setDirect(e.target.checked); };
+  if (isBrig()) setDirect(true); // бригадир заправляє лише на АЗС своєю карткою
   photoInput('ph','phB','phH', file => { f.file = file; f.ts = new Date().toISOString(); });
   getGeo().then(g => {
     if (!$('#gT')) return;
@@ -531,7 +538,7 @@ function openOut(){
   $('#save').onclick = async () => {
     const miss = [];
     const nm = noMeter();
-    if (!f.machine) miss.push('техніку'); if (!nm && f.value==='') miss.push('показник'); if (!(+f.liters>0)) miss.push('літри'); if (!nm && !f.file) miss.push('фото');
+    if (!f.machine) miss.push('техніку'); if (!nm && !f.direct && f.value==='') miss.push('показник'); if (!(+f.liters>0)) miss.push('літри'); if (!nm && !f.file) miss.push('фото');
     const err = $('#err');
     if (miss.length) { err.hidden=false; err.textContent = 'Додайте: ' + miss.join(', '); return; }
     const m = R.machines.find(x=>x.id===f.machine);
@@ -541,14 +548,14 @@ function openOut(){
       const g = f.geo && !f.geo.err ? f.geo : null;
       const photo = !f.file ? null : await makePhoto(f.file, [
         new Date(ts).toLocaleString('uk-UA'),
-        nm ? `${m.name} · ${f.liters} л ${f.fuel}` : `${m.name} · ${f.value} ${m.unit==='км'?'км':'м/г'} · ${f.liters} л ${f.fuel}`,
+        nm || f.value==='' ? `${m.name} · ${f.liters} л ${f.fuel}${f.direct?' · АЗС '+f.azs:''}` : `${m.name} · ${f.value} ${m.unit==='км'?'км':'м/г'} · ${f.liters} л ${f.fuel}`,
         g ? `${g.lat.toFixed(5)}, ${g.lon.toFixed(5)} ±${Math.round(g.acc)}м` : 'GPS не визначено',
         S.refs.user.name
       ]);
-      const rec = { clientId: uid(), type:'out', ts, machineId: m.id, machineName: m.name, machineCat: m.cat, unit: m.unit, receiver: f.receiver.trim(), value: nm ? null : +f.value, liters: +f.liters, max: nm ? false : f.max, fuel: f.fuel, src: f.direct ? 'azs' : '', place: f.direct ? f.azs : '',
+      const rec = { clientId: uid(), type:'out', ts, machineId: m.id, machineName: m.name, machineCat: m.cat, unit: m.unit, receiver: f.receiver.trim(), value: nm || f.value==='' ? null : +f.value, liters: +f.liters, max: nm ? false : f.max, fuel: f.fuel, src: f.direct ? 'azs' : '', place: f.direct ? f.azs : '',
         lat: g?.lat ?? null, lon: g?.lon ?? null, acc: g?.acc ?? null, photo };
       await saveRec(rec);
-      if (!nm) { R.last = R.last || {}; R.last[m.id] = { val: +f.value, ts }; ls.set('refs', R); }
+      if (!nm && f.value!=='') { R.last = R.last || {}; R.last[m.id] = { val: +f.value, ts }; ls.set('refs', R); }
     } catch(e) { err.hidden=false; err.textContent = e.message; $('#save').disabled=false; $('#save').textContent='Відправити'; }
   };
 }
@@ -561,7 +568,7 @@ function openIn(){
     <div class="sheet-head c3"><button class="link" id="x">Скасувати</button><b>Отримання в КУБ</b><span></span></div>
     <div class="stack">
       <div><span class="lbl" style="margin-left:4px">АЗС</span><div class="chips" id="az"></div></div>
-      <div class="field"><label for="lt2">Літри за чеком</label><input type="number" inputmode="decimal" step="0.1" id="lt2" placeholder="0">${fuelSw('fuI')}</div>
+      <div class="field"><label for="lt2">Літри за чеком</label><input type="number" inputmode="decimal" step="0.1" id="lt2" placeholder="0">${fuelSw('fuI', ['ДП','Бензин'])}</div>
       <label class="field photo" for="ph2"><div class="ph" id="phB2">+</div><div><div style="font-weight:550">Фото чека</div><div class="hint" style="margin:0" id="phH2">Обов'язково</div></div><input type="file" id="ph2" accept="image/*" capture="environment" hidden></label>
       <div class="hint bad" id="err" hidden></div>
       <button class="btn send" id="save">Відправити</button>
